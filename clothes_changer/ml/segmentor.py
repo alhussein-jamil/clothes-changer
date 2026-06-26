@@ -14,6 +14,7 @@ from transformers import AutoModelForSemanticSegmentation, SegformerImageProcess
 
 from clothes_changer.config import Settings, get_settings
 from clothes_changer.ml.gpu_memory import free_cuda_cache, prefer_cpu_for_segmentation
+from clothes_changer.ml.pipeline_debug import PipelineDebugSession
 from clothes_changer.ml.process import generate_mask, get_palette, load_seg_model
 from clothes_changer.utils.logging import log_duration
 
@@ -78,11 +79,25 @@ class ClothesSegmentor:
                 self._palette = get_palette(4)
             logger.info("Clothes segmentation models ready")
 
-    def segment_clothes(self, image: Image.Image) -> tuple[torch.Tensor, torch.Tensor]:
+    def segment_clothes(
+        self,
+        image: Image.Image,
+        debug: PipelineDebugSession | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         with self._lock:
-            return self._segment_clothes_locked(image)
+            if debug is not None:
+                debug.save_image("00_source.png", image.convert("RGB"))
+                debug.metadata["segformer_model"] = self.settings.segformer_model
+                debug.metadata["u2net_model"] = self.settings.extra_clothes_model
+                debug.metadata["device"] = self.device
+                debug.metadata["image_size"] = list(image.size)
+            return self._segment_clothes_locked(image, debug=debug)
 
-    def _segment_clothes_locked(self, image: Image.Image) -> tuple[torch.Tensor, torch.Tensor]:
+    def _segment_clothes_locked(
+        self,
+        image: Image.Image,
+        debug: PipelineDebugSession | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         self._load()
         if self._model is None or self._u2net is None or self._palette is None:
             msg = "Segmentation models failed to load"
@@ -103,6 +118,9 @@ class ClothesSegmentor:
                     palette=self._palette,
                     device=self.device,
                 )
+
+        if debug is not None:
+            debug.save_image("u2net/01_u2net_mask.png", extra_cloth_seg.convert("RGB"))
 
         extra_cloth_mask = pil_to_tensor(extra_cloth_seg)
         extra_cloth_mask = torch.where(extra_cloth_mask > 0, 1, 0)[0]
@@ -127,6 +145,15 @@ class ClothesSegmentor:
             for cat in CLOTHES_CATEGORIES:
                 clothes_mask[pred_seg == cat] = 1
 
+            if debug is not None:
+                debug.save_tensor_mask("segformer/01_person_mask.png", person_mask)
+                debug.save_tensor_mask("segformer/02_clothes_mask.png", clothes_mask)
+                pred_np = pred_seg.cpu().numpy().astype(np.uint8)
+                debug.save_image(
+                    "segformer/03_label_map.png",
+                    Image.fromarray(pred_np, mode="L"),
+                )
+
             combined_clothes_mask = torch.logical_or(
                 clothes_mask,
                 torch.logical_and(
@@ -144,14 +171,28 @@ class ClothesSegmentor:
             int(combined_clothes_mask_cpu.sum()),
         )
 
+        if debug is not None:
+            person_np = person_mask_cpu.numpy().astype(np.uint8)
+            clothes_np = combined_clothes_mask_cpu.numpy().astype(np.uint8)
+            debug.save_mask("04_fused_person_mask.png", person_np)
+            debug.save_mask("05_fused_clothes_mask.png", clothes_np)
+            debug.save_overlay("06_fused_overlay.png", image, person_np, clothes_np)
+            debug.metadata["person_pixels"] = int(person_np.sum())
+            debug.metadata["clothes_pixels"] = int(clothes_np.sum())
+            debug.save_meta()
+
         if torch.cuda.is_available():
             free_cuda_cache()
 
         return person_mask_cpu, combined_clothes_mask_cpu
 
-    def segment(self, image: Image.Image) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def segment(
+        self,
+        image: Image.Image,
+        debug: PipelineDebugSession | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Return (label_map, person_mask, clothes_mask) as uint8 arrays."""
-        person_t, clothes_t = self.segment_clothes(image.convert("RGB"))
+        person_t, clothes_t = self.segment_clothes(image.convert("RGB"), debug=debug)
         person = person_t.numpy().astype(np.uint8)
         clothes = clothes_t.numpy().astype(np.uint8)
         label_map = np.zeros(person.shape, dtype=np.int32)

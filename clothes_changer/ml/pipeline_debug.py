@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
 from PIL import Image
 
 from clothes_changer.config import Settings, get_settings
@@ -18,25 +19,51 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineDebugSession:
-    """Write images and JSON metadata for one ``generate()`` run."""
+    """Write images and JSON metadata for one debug run (segmentation + generation)."""
 
     def __init__(self, root: Path) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
-        self.metadata: dict[str, Any] = {"steps": []}
+        self.metadata: dict[str, Any] = {"events": []}
+
+    @classmethod
+    def open_or_create(
+        cls,
+        settings: Settings,
+        username: str,
+        existing_dir: str | Path | None = None,
+    ) -> tuple[PipelineDebugSession | None, str | None]:
+        """Reuse an active run folder or create ``{username}_{timestamp}``."""
+        if not settings.pipeline_debug:
+            return None, None if existing_dir is None else str(existing_dir)
+
+        if existing_dir:
+            root = Path(existing_dir)
+            if root.is_dir():
+                logger.debug("Reusing pipeline debug folder %s", root)
+                return cls(root), str(root.resolve())
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        root = settings.resolved_pipeline_debug_dir / f"{username}_{ts}"
+        session = cls(root)
+        session.metadata["username"] = username
+        logger.info("Pipeline debug dumps → %s", session.root)
+        return session, str(root.resolve())
 
     @classmethod
     def create(cls, settings: Settings, username: str) -> PipelineDebugSession | None:
-        if not settings.pipeline_debug:
-            return None
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_dir = settings.resolved_pipeline_debug_dir / f"{username}_{ts}"
-        session = cls(run_dir)
-        logger.info("Pipeline debug dumps → %s", session.root)
+        session, _ = cls.open_or_create(settings, username, None)
         return session
 
+    def subfolder(self, name: str) -> PipelineDebugSession:
+        """Nested session, e.g. ``segmentation/`` or ``generation/`` under the run root."""
+        child = PipelineDebugSession(self.root / name)
+        child.metadata["parent"] = str(self.root)
+        child.metadata["phase"] = name
+        return child
+
     def record(self, step: str, **fields: Any) -> None:
-        self.metadata["steps"].append({"step": step, **fields})
+        self.metadata["events"].append({"step": step, **fields})
 
     def save_meta(self) -> None:
         path = self.root / "run_metadata.json"
@@ -50,6 +77,12 @@ class PipelineDebugSession:
     def save_mask(self, rel_path: str, mask: np.ndarray) -> None:
         arr = (mask > 0).astype(np.uint8) * 255
         self.save_image(rel_path, Image.fromarray(arr, mode="L"))
+
+    def save_tensor_mask(self, rel_path: str, mask: torch.Tensor) -> None:
+        arr = mask.detach().cpu().numpy()
+        if arr.ndim > 2:
+            arr = arr.squeeze()
+        self.save_mask(rel_path, (arr > 0).astype(np.uint8))
 
     def save_overlay(
         self,
@@ -67,4 +100,5 @@ class PipelineDebugSession:
 
 
 def maybe_debug_session(username: str) -> PipelineDebugSession | None:
-    return PipelineDebugSession.create(get_settings(), username)
+    session, _ = PipelineDebugSession.open_or_create(get_settings(), username, None)
+    return session

@@ -204,7 +204,7 @@ class GenerationPipeline:
                 prompt=prompt,
                 negative_prompt=negative_prompt,
                 guidance_scale=guidance_scale,
-                steps=num_inference_steps,
+                inference_steps=num_inference_steps,
                 strength=1.0,
             )
 
@@ -266,6 +266,7 @@ class GenerationPipeline:
         use_controlnet: bool | None = None,
         username: str = "guest",
         progress: ProgressCallback | None = None,
+        debug_session_dir: str | None = None,
     ) -> tuple[Image.Image, str]:
         report = progress or _noop_progress
         report(0.05, "Preparing image and masks")
@@ -287,8 +288,12 @@ class GenerationPipeline:
         if person_mask is None or clothes_mask is None:
             logger.info("No editor masks — running full segmentation")
             report(0.1, "Running clothes segmentation")
+            session, _ = PipelineDebugSession.open_or_create(
+                self.settings, username, debug_session_dir
+            )
+            seg_debug = session.subfolder("segmentation") if session else None
             with log_duration(logger, "auto-segment"):
-                _, person_mask, clothes_mask = get_segmentor().segment(image)
+                _, person_mask, clothes_mask = get_segmentor().segment(image, debug=seg_debug)
 
         person_mask, clothes_mask = align_masks(person_mask, clothes_mask, h, w)
 
@@ -305,7 +310,10 @@ class GenerationPipeline:
         logger.info("Using seed %d on %s", seed, device)
         generator = torch.Generator(device=device).manual_seed(seed)
 
-        debug = PipelineDebugSession.create(self.settings, username)
+        session, active_dir = PipelineDebugSession.open_or_create(
+            self.settings, username, debug_session_dir
+        )
+        debug = session.subfolder("generation") if session else None
         if debug is not None:
             debug.save_image("00_source.png", image)
             debug.metadata.update(
@@ -314,7 +322,7 @@ class GenerationPipeline:
                     "seed": seed,
                     "device": device,
                     "model": model,
-                    "steps": steps,
+                    "inference_steps": steps,
                     "guidance_scale": guidance_scale,
                     "use_controlnet": use_controlnet,
                     "prompt": prompt,
@@ -410,7 +418,7 @@ class GenerationPipeline:
             debug.save_image("99_final_output.png", full_image)
             debug.metadata["output_file"] = filename
             debug.save_meta()
-            logger.info("Pipeline debug artifacts → %s", debug.root)
+            logger.info("Pipeline debug artifacts → %s", active_dir or debug.root)
         report(1.0, "Complete")
         return full_image, filename
 

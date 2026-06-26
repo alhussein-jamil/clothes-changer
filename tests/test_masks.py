@@ -4,6 +4,7 @@ from PIL import Image
 from clothes_changer.ui.constants import CLOTHES_COLOR, EDITOR_CANVAS_SIZE, PERSON_COLOR
 from clothes_changer.ui.masks import (
     apply_masks_to_editor,
+    editor_mask_reset,
     letterbox_to_editor_canvas,
     parse_editor_masks,
 )
@@ -155,6 +156,23 @@ def test_apply_masks_replaces_existing_layers():
     assert layer[50, 50, 0] == 0
     assert layer[150, 150, 1] == CLOTHES_COLOR[1]
     assert result["composite"] is not None
+
+
+def test_editor_mask_reset_clears_stacked_layers():
+    clean = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(10, 20, 30))
+    stale = Image.new("RGBA", EDITOR_CANVAS_SIZE, color=(0, 0, 0, 0))
+    stale.putpixel((50, 50), CLOTHES_COLOR)
+    editor = {
+        "background": clean.convert("RGBA"),
+        "layers": [stale, stale.copy(), stale.copy()],
+        "composite": None,
+    }
+
+    reset = editor_mask_reset(editor, clean)
+
+    assert reset["layers"] == []
+    assert reset["background"].size == EDITOR_CANVAS_SIZE
+    assert np.array(reset["composite"])[50, 50].tolist() == [10, 20, 30]
 
 
 def test_apply_masks_background_matches_layer_size():

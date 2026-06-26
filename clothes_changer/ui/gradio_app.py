@@ -28,6 +28,7 @@ from clothes_changer.ui.masks import (
     apply_masks_to_editor,
     background_key_from_image,
     background_key_from_path,
+    editor_mask_reset,
     file_path_from_editor,
     image_from_segment_key,
     load_editor_clean_image,
@@ -46,6 +47,7 @@ class SegmentationResult(NamedTuple):
     pipeline_clean: Image.Image
     person: np.ndarray
     clothes: np.ndarray
+    debug_session_dir: str | None
 
 
 class GradioApp:
@@ -67,6 +69,8 @@ class GradioApp:
         self,
         editor: dict | None,
         clean: Image.Image | None = None,
+        username: str | None = None,
+        debug_session_dir: str | None = None,
     ) -> SegmentationResult:
         """Run ML segmentation and build an ImageEditor value dict."""
         seg_image = load_editor_clean_image(editor) if editor else None
@@ -78,11 +82,34 @@ class GradioApp:
             seg_image = seg_image.convert("RGB")
 
         from clothes_changer.ml.gpu_memory import release_inpaint_gpu, release_segmentation_gpu
+        from clothes_changer.ml.pipeline_debug import PipelineDebugSession
         from clothes_changer.ml.segmentor import get_segmentor
 
+        username = username or self.settings.default_admin
+        session, active_dir = PipelineDebugSession.open_or_create(
+            self.settings, username, debug_session_dir
+        )
+        seg_debug = None
+        if session is not None:
+            seg_debug = session.subfolder("segmentation")
+            seg_debug.metadata.update(
+                {
+                    "username": username,
+                    "segformer_model": self.settings.segformer_model,
+                    "u2net_model": self.settings.extra_clothes_model,
+                    "image_size": list(seg_image.size),
+                }
+            )
+            seg_debug.save_image("00_source.png", seg_image)
+
         release_inpaint_gpu()
-        logger.info("segment: running segmentor on %sx%s image", seg_image.width, seg_image.height)
-        _, person, clothes = get_segmentor().segment(seg_image)
+        logger.info(
+            "segment: running segmentor on %sx%s image (user=%r)",
+            seg_image.width,
+            seg_image.height,
+            username,
+        )
+        _, person, clothes = get_segmentor().segment(seg_image, debug=seg_debug)
         release_segmentation_gpu()
         logger.info(
             "segment: done — person_pixels=%d clothes_pixels=%d",
@@ -90,8 +117,8 @@ class GradioApp:
             int(clothes.sum()),
         )
         pipeline_clean = clean.convert("RGB") if clean is not None else seg_image
-        editor_value = apply_masks_to_editor(seg_image, person, clothes, editor=editor)
-        return SegmentationResult(editor_value, pipeline_clean, person, clothes)
+        editor_value = apply_masks_to_editor(seg_image, person, clothes, editor=editor, clean=clean)
+        return SegmentationResult(editor_value, pipeline_clean, person, clothes, active_dir)
 
     def _resolve_clean_image(
         self,
@@ -141,35 +168,55 @@ class GradioApp:
         last_key: str | None,
         clean_source: Image.Image | None,
         skip_upload: bool,
-    ) -> tuple[dict, Image.Image | None, str | None, bool]:
+        request: gr.Request,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Segment on upload and push masks straight into the ImageEditor."""
+        username = self._session_username(request) or self.settings.default_admin
         if skip_upload:
             logger.info("prepare_upload_segment: skipped — programmatic update")
-            return gr.skip(), clean_source, last_key, False
+            return gr.skip(), clean_source, last_key, False, debug_session_dir
 
         bg, person, clothes = parse_editor_masks(editor)
         if bg is None:
             logger.warning("prepare_upload_segment: no editor background yet")
-            return gr.skip(), clean_source, last_key, False
+            return gr.skip(), clean_source, last_key, False, debug_session_dir
 
         clean = load_editor_clean_image(editor) or bg.convert("RGB")
         key = background_key_from_image(clean)
         layers = (editor or {}).get("layers") or []
         if len(layers) > 0 and masks_have_pixels(person, clothes) and key == last_key:
             logger.info("prepare_upload_segment: skipped — masks already on editor")
-            return gr.skip(), clean_source or clean, key, False
+            return gr.skip(), clean_source or clean, key, False, debug_session_dir
 
         logger.info(
             "prepare_upload_segment: running segmentation on %sx%s image",
             clean.width,
             clean.height,
         )
-        result = self._run_segmentation(editor, clean=clean)
+        result = self._run_segmentation(
+            editor,
+            clean=clean,
+            username=username,
+            debug_session_dir=debug_session_dir,
+        )
         if not masks_have_pixels(result.person, result.clothes):
             logger.warning("prepare_upload_segment: empty segment output for %s", key)
-            return gr.skip(), clean_source or result.pipeline_clean, key, False
+            return (
+                gr.skip(),
+                clean_source or result.pipeline_clean,
+                key,
+                False,
+                result.debug_session_dir,
+            )
 
-        return gr.update(value=result.editor_value), result.pipeline_clean, key, True
+        return (
+            gr.update(value=result.editor_value),
+            result.pipeline_clean,
+            key,
+            True,
+            result.debug_session_dir,
+        )
 
     def sync_clean_source(
         self,
@@ -272,13 +319,13 @@ class GradioApp:
             return None
         if isinstance(value, dict):
             return file_path_from_editor(value)
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, list | tuple):
             # Dataset type="tuple" -> (index, sample); single input -> sample is [path]
             if len(value) == 2:
                 sample = value[1]
                 if isinstance(sample, dict):
                     return file_path_from_editor(sample)
-                if isinstance(sample, (list, tuple)):
+                if isinstance(sample, list | tuple):
                     if not sample:
                         return None
                     first = sample[0]
@@ -296,11 +343,11 @@ class GradioApp:
     def _editor_from_select(self, value: object) -> dict | None:
         if isinstance(value, dict) and "background" in value:
             return value
-        if isinstance(value, (list, tuple)) and len(value) == 2:
+        if isinstance(value, list | tuple) and len(value) == 2:
             sample = value[1]
             if isinstance(sample, dict) and "background" in sample:
                 return sample
-            if isinstance(sample, (list, tuple)) and sample and isinstance(sample[0], dict):
+            if isinstance(sample, list | tuple) and sample and isinstance(sample[0], dict):
                 return sample[0]
         return None
 
@@ -309,18 +356,21 @@ class GradioApp:
         value: dict | None,
         clean: Image.Image | None,
         key: str | None,
-    ) -> tuple[dict, Image.Image | None, str | None, bool]:
+        debug_session_dir: str | None = None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Return a Gradio ImageEditor update and suppress the upload hook."""
         if value is None:
-            return gr.update(), clean, key, True
-        return gr.update(value=value), clean, key, True
+            return gr.update(), clean, key, True, debug_session_dir
+        return gr.update(value=value), clean, key, True, debug_session_dir
 
     def _segment_loaded_image(
         self,
         image: Image.Image,
         source_path: str | None = None,
         editor: dict | None = None,
-    ) -> tuple[dict, Image.Image, str, bool]:
+        username: str | None = None,
+        debug_session_dir: str | None = None,
+    ) -> tuple[dict, Image.Image, str, bool, str | None]:
         """Segment a file-backed or gallery image; suppress the follow-up upload hook."""
         if editor is None or load_editor_clean_image(editor) is None:
             editor = {
@@ -328,13 +378,18 @@ class GradioApp:
                 "layers": [],
                 "composite": None,
             }
-        result = self._run_segmentation(editor, clean=image)
+        result = self._run_segmentation(
+            editor,
+            clean=image,
+            username=username,
+            debug_session_dir=debug_session_dir,
+        )
         key = (
             background_key_from_path(source_path)
             if source_path
             else background_key_from_image(result.pipeline_clean)
         )
-        return result.editor_value, result.pipeline_clean, key, True
+        return result.editor_value, result.pipeline_clean, key, True, result.debug_session_dir
 
     def segment_if_unmasked(self, editor: dict | None) -> tuple[dict, Image.Image | None]:
         """Auto-segment when an image is present but mask layers are empty."""
@@ -356,39 +411,81 @@ class GradioApp:
             return gr.update(), None
         return gr.update(value=value), clean
 
+    def resegment_prepare(
+        self,
+        editor: dict | None,
+        clean_source: Image.Image | None,
+        last_key: str | None,
+        request: gr.Request,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
+        """Clear mask layers before re-segmenting (Gradio appends layers otherwise)."""
+        logger.info("resegment: clearing existing mask layers")
+        clean = self._resolve_clean_image(editor, clean_source, last_key)
+        if clean is None:
+            raise gr.Error("Load an image first, then click Redo Clothes Segmentation.")
+        reset = editor_mask_reset(editor, clean)
+        return gr.update(value=reset), clean, last_key, True, debug_session_dir
+
     def resegment(
         self,
         editor: dict | None,
         clean_source: Image.Image | None,
         last_key: str | None,
-    ) -> tuple[dict, Image.Image | None, str | None, bool]:
+        request: gr.Request,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Force re-segmentation (Redo button) — replaces mask layer, never stacks."""
         logger.info("resegment: replacing existing mask layer")
-        clean = self._resolve_clean_image(editor, clean_source, last_key)
+        username = self._session_username(request) or self.settings.default_admin
+        clean = clean_source or self._resolve_clean_image(editor, None, last_key)
         if clean is None:
             raise gr.Error("Load an image first, then click Redo Clothes Segmentation.")
-        result = self._run_segmentation(editor, clean=clean)
+        result = self._run_segmentation(
+            editor,
+            clean=clean,
+            username=username,
+            debug_session_dir=debug_session_dir,
+        )
         key = background_key_from_image(result.pipeline_clean) if clean is not None else last_key
-        return self._editor_update(result.editor_value, result.pipeline_clean, key)
+        return self._editor_update(
+            result.editor_value, result.pipeline_clean, key, result.debug_session_dir
+        )
 
     def segment_after_example(
-        self, editor: dict | None
-    ) -> tuple[dict, Image.Image | None, str | None, bool]:
+        self,
+        editor: dict | None,
+        request: gr.Request,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Segment after gr.Examples loads into the editor (canvas already fitted)."""
         logger.info("segment_after_example: called")
-        value, clean = self.segment(editor)
-        if value is None or clean is None:
-            return gr.update(), None, None, True
-        key = background_key_from_image(clean)
-        return self._editor_update(value, clean, key)
+        username = self._session_username(request) or self.settings.default_admin
+        clean = self._resolve_clean_image(editor, None, None)
+        if clean is None:
+            return gr.update(), None, None, True, debug_session_dir
+        result = self._run_segmentation(
+            editor,
+            clean=clean,
+            username=username,
+            debug_session_dir=debug_session_dir,
+        )
+        key = background_key_from_image(result.pipeline_clean)
+        return self._editor_update(
+            result.editor_value, result.pipeline_clean, key, result.debug_session_dir
+        )
 
-    def clear_editor_state(self) -> tuple[None, None]:
-        return None, None
+    def clear_editor_state(self) -> tuple[None, None, None]:
+        return None, None, None
 
     def select_image_and_segment(
-        self, evt: gr.SelectData
-    ) -> tuple[dict, Image.Image | None, str | None, bool]:
+        self,
+        evt: gr.SelectData,
+        request: gr.Request,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Load an image from history gallery and run segmentation."""
+        username = self._session_username(request) or self.settings.default_admin
         logger.info(
             "select_image_and_segment: selected=%s index=%s value=%r",
             evt.selected,
@@ -396,22 +493,30 @@ class GradioApp:
             evt.value,
         )
         if not evt.selected:
-            return gr.update(), None, None, False
+            return gr.update(), None, None, False, debug_session_dir
         path = self._path_from_select(evt.value)
         if not path:
             logger.warning("select_image_and_segment: could not parse path from %r", evt.value)
-            return gr.update(), None, None, False
+            return gr.update(), None, None, False, debug_session_dir
         image = self._open_image(path)
         if image is None:
-            return gr.update(), None, None, False
-        value, clean, key, _ = self._segment_loaded_image(image, source_path=path)
-        return self._editor_update(value, clean, key)
+            return gr.update(), None, None, False, debug_session_dir
+        value, clean, key, _, new_debug_dir = self._segment_loaded_image(
+            image,
+            source_path=path,
+            username=username,
+            debug_session_dir=debug_session_dir,
+        )
+        return self._editor_update(value, clean, key, new_debug_dir)
 
     def load_history_and_segment(
-        self, evt: gr.SelectData
-    ) -> tuple[dict, Image.Image | None, str | None, bool]:
+        self,
+        evt: gr.SelectData,
+        request: gr.Request,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Load a history gallery image and run segmentation."""
-        return self.select_image_and_segment(evt)
+        return self.select_image_and_segment(evt, request, debug_session_dir)
 
     @staticmethod
     def _store_example_index(evt: gr.SelectData) -> int | None:
@@ -421,30 +526,45 @@ class GradioApp:
         self,
         editor: dict | None,
         index: int | None,
-    ) -> tuple[dict, Image.Image | None, str | None, bool]:
+        request: gr.Request,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Segment after gr.Examples has populated the ImageEditor."""
         logger.info("load_example_after_select: index=%s", index)
+        username = self._session_username(request) or self.settings.default_admin
         path: str | None = None
         if index is not None and 0 <= index < len(self.examples):
             path = self.examples[index]
         if path:
             image = self._open_image(path)
             if image is not None:
-                value, clean, key, _ = self._segment_loaded_image(
-                    image, source_path=path, editor=editor
+                value, clean, key, _, new_debug_dir = self._segment_loaded_image(
+                    image,
+                    source_path=path,
+                    editor=editor,
+                    username=username,
+                    debug_session_dir=debug_session_dir,
                 )
-                return self._editor_update(value, clean, key)
-        return self.segment_after_example(editor)
+                return self._editor_update(value, clean, key, new_debug_dir)
+        return self.segment_after_example(editor, request, debug_session_dir)
 
     def use_result_as_input(
-        self, slider_val: tuple | None
-    ) -> tuple[dict, Image.Image | None, str | None, bool]:
+        self,
+        slider_val: tuple | None,
+        request: gr.Request,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         if not slider_val:
-            return gr.update(), None, None, False
+            return gr.update(), None, None, False, debug_session_dir
+        username = self._session_username(request) or self.settings.default_admin
         _, after = slider_val
         clean = after.convert("RGB")
-        value, clean, key, _ = self._segment_loaded_image(clean)
-        return self._editor_update(value, clean, key)
+        value, clean, key, _, new_debug_dir = self._segment_loaded_image(
+            clean,
+            username=username,
+            debug_session_dir=debug_session_dir,
+        )
+        return self._editor_update(value, clean, key, new_debug_dir)
 
     def generate(
         self,
@@ -459,6 +579,7 @@ class GradioApp:
         guidance_scale: float,
         seed: int,
         random_seed: bool,
+        debug_session_dir: str | None,
         request: gr.Request,
         progress: gr.Progress = gr.Progress(),
     ) -> tuple[tuple[Image.Image, Image.Image] | None, int]:
@@ -508,11 +629,17 @@ class GradioApp:
         ):
             logger.info("generate: masks empty — running on-the-fly segmentation")
             from clothes_changer.ml.gpu_memory import release_inpaint_gpu
+            from clothes_changer.ml.pipeline_debug import PipelineDebugSession
             from clothes_changer.ml.segmentor import get_segmentor
 
             progress(0.05, desc="Running clothes segmentation")
             release_inpaint_gpu()
-            _, person_mask, clothes_mask = get_segmentor().segment(source)
+            session, active_dir = PipelineDebugSession.open_or_create(
+                self.settings, username, debug_session_dir
+            )
+            seg_debug = session.subfolder("segmentation") if session else None
+            _, person_mask, clothes_mask = get_segmentor().segment(source, debug=seg_debug)
+            debug_session_dir = active_dir
 
         model_id = model_id if model_id in self.model_ids else self.default_model
         actual_seed = random.randint(0, SEED_MAX) if random_seed else int(seed)
@@ -535,6 +662,7 @@ class GradioApp:
                 use_controlnet=use_controlnet,
                 username=username,
                 progress=report_progress,
+                debug_session_dir=debug_session_dir,
             )
         except Exception as e:
             logger.exception("Generation failed")
@@ -643,6 +771,7 @@ class GradioApp:
                             segment_key = gr.State(value=None)
                             skip_upload_segment = gr.State(value=False)
                             example_index = gr.State(value=None)
+                            debug_session_dir = gr.State(value=None)
 
                         with gr.Column(scale=1):
                             result = ImageSlider(
@@ -732,18 +861,46 @@ class GradioApp:
                 outputs=clean_source,
             ).success(
                 self.prepare_upload_segment,
-                inputs=[input_image, segment_key, clean_source, skip_upload_segment],
-                outputs=[input_image, clean_source, segment_key, skip_upload_segment],
+                inputs=[
+                    input_image,
+                    segment_key,
+                    clean_source,
+                    skip_upload_segment,
+                    debug_session_dir,
+                ],
+                outputs=[
+                    input_image,
+                    clean_source,
+                    segment_key,
+                    skip_upload_segment,
+                    debug_session_dir,
+                ],
             )
             input_image.clear(
                 self.clear_editor_state,
                 None,
-                [clean_source, segment_key],
+                [clean_source, segment_key, debug_session_dir],
             )
             resegment_btn.click(
+                self.resegment_prepare,
+                [input_image, clean_source, segment_key, debug_session_dir],
+                [
+                    input_image,
+                    clean_source,
+                    segment_key,
+                    skip_upload_segment,
+                    debug_session_dir,
+                ],
+            ).then(
                 self.resegment,
-                [input_image, clean_source, segment_key],
-                [input_image, clean_source, segment_key, skip_upload_segment],
+                [input_image, clean_source, segment_key, debug_session_dir],
+                [
+                    input_image,
+                    clean_source,
+                    segment_key,
+                    skip_upload_segment,
+                    debug_session_dir,
+                ],
             )
 
             def reload_models() -> gr.Dropdown:
@@ -779,6 +936,7 @@ class GradioApp:
                     guidance,
                     seed,
                     random_seed,
+                    debug_session_dir,
                 ],
                 [result, seed],
             ).then(lambda: gr.update(visible=True), None, use_as_input).then(
@@ -787,14 +945,14 @@ class GradioApp:
 
             use_as_input.click(
                 self.use_result_as_input,
-                result,
-                [input_image, clean_source, segment_key, skip_upload_segment],
+                [result, debug_session_dir],
+                [input_image, clean_source, segment_key, skip_upload_segment, debug_session_dir],
             )
 
             history_gallery.select(
                 self.load_history_and_segment,
-                None,
-                [input_image, clean_source, segment_key, skip_upload_segment],
+                debug_session_dir,
+                [input_image, clean_source, segment_key, skip_upload_segment, debug_session_dir],
             )
 
             if examples is not None:
@@ -804,8 +962,14 @@ class GradioApp:
                     example_index,
                 ).then(
                     self.load_example_after_select,
-                    inputs=[input_image, example_index],
-                    outputs=[input_image, clean_source, segment_key, skip_upload_segment],
+                    inputs=[input_image, example_index, debug_session_dir],
+                    outputs=[
+                        input_image,
+                        clean_source,
+                        segment_key,
+                        skip_upload_segment,
+                        debug_session_dir,
+                    ],
                 )
 
         return demo

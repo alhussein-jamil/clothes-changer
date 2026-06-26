@@ -12,3 +12,5 @@ outputs/
 models
 outputs
 config/content.local.yaml
+my_debug/
+debug/

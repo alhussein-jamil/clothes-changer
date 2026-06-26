@@ -30,7 +30,7 @@ def _describe_value(value: Any) -> str:
         keys = list(value.keys())
         preview = {k: _describe_value(value[k]) for k in keys[:6]}
         return f"dict(keys={keys}, preview={preview})"
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return f"{type(value).__name__}(len={len(value)})"
     return f"{type(value).__name__}({value!r})"
 
@@ -54,7 +54,7 @@ def _load_background_image(bg_raw: Any) -> Image.Image | None:
         return bg_raw.convert("RGBA")
     if isinstance(bg_raw, np.ndarray):
         return Image.fromarray(bg_raw).convert("RGBA")
-    path = _resolve_file_path(bg_raw) if isinstance(bg_raw, (str, dict)) else None
+    path = _resolve_file_path(bg_raw) if isinstance(bg_raw, str | dict) else None
     if path:
         return Image.open(path).convert("RGBA")
     logger.warning(
@@ -73,7 +73,7 @@ def _load_layer_image(layer_raw: Any, width: int, height: int) -> Image.Image | 
     elif isinstance(layer_raw, Image.Image):
         img = layer_raw
     else:
-        path = _resolve_file_path(layer_raw) if isinstance(layer_raw, (str, dict)) else None
+        path = _resolve_file_path(layer_raw) if isinstance(layer_raw, str | dict) else None
         if not path:
             logger.warning(
                 "parse_editor_masks: unsupported layer type %s",
@@ -137,7 +137,7 @@ def file_path_from_editor(editor: dict | None) -> str | None:
         raw = editor.get(field)
         if raw is None:
             continue
-        path = _resolve_file_path(raw) if isinstance(raw, (str, dict)) else None
+        path = _resolve_file_path(raw) if isinstance(raw, str | dict) else None
         if path:
             return path
     return None
@@ -179,7 +179,7 @@ def load_editor_clean_image(editor: dict | None) -> Image.Image | None:
     if bg_raw is None:
         comp = editor.get("composite")
         # File-backed composite only — PIL/RGBA composite includes baked-in mask colors.
-        if isinstance(comp, (str, dict)):
+        if isinstance(comp, str | dict):
             bg_raw = comp
         else:
             return None
@@ -204,13 +204,13 @@ def stable_source_key(raw: Any) -> str | None:
         return None
     if isinstance(raw, Image.Image):
         return background_key_from_image(raw.convert("RGB"))
-    path = _resolve_file_path(raw) if isinstance(raw, (str, dict)) else None
+    path = _resolve_file_path(raw) if isinstance(raw, str | dict) else None
     if path and Path(path).is_file():
         if "gradio" in path or path.startswith("/tmp"):
             with Image.open(path) as img:
                 return background_key_from_image(img.convert("RGB"))
         return f"path:{Path(path).resolve()}"
-    bg = _load_background_image(raw) if isinstance(raw, (str, dict, Image.Image)) else None
+    bg = _load_background_image(raw) if isinstance(raw, str | dict | Image.Image) else None
     if bg is not None:
         return background_key_from_image(bg.convert("RGB"))
     return None
@@ -300,11 +300,32 @@ def unletterbox_masks(
     return (person_out > 0).astype(np.uint8), (clothes_out > 0).astype(np.uint8)
 
 
+def editor_mask_reset(editor: dict | None, clean: Image.Image) -> dict:
+    """Return a mask-free ImageEditor value at the current canvas size.
+
+    Gradio's ImageEditor can append programmatic mask layers instead of
+    replacing them; callers should push this payload before re-segmenting.
+    """
+    clean_rgba = clean.convert("RGBA")
+    canvas = clean_rgba
+    if editor and isinstance(editor, dict) and editor.get("background") is not None:
+        existing = _load_background_image(editor["background"])
+        if existing is not None and existing.size != clean_rgba.size:
+            canvas = letterbox_to_editor_canvas(clean, existing.size)
+    return {
+        "background": canvas,
+        "layers": [],
+        "composite": canvas.convert("RGB"),
+    }
+
+
 def apply_masks_to_editor(
     background: Image.Image,
     person: np.ndarray,
     clothes: np.ndarray,
     editor: dict | None = None,
+    *,
+    clean: Image.Image | None = None,
 ) -> dict:
     """Build ImageEditor value with visible mask overlay for Gradio.
 
@@ -327,7 +348,18 @@ def apply_masks_to_editor(
     layer_arr[clothes > 0] = CLOTHES_COLOR
     layer_pil = Image.fromarray(layer_arr, mode="RGBA")
 
-    composite = mask_overlay(display_bg.convert("RGB"), person, clothes)
+    overlay_base = (
+        clean.convert("RGB")
+        if clean is not None
+        else load_editor_clean_image(editor) or display_bg.convert("RGB")
+    )
+    if overlay_base.size != (cw, ch):
+        if clean is not None:
+            overlay_base = letterbox_to_editor_canvas(clean, (cw, ch)).convert("RGB")
+        else:
+            overlay_base = overlay_base.resize((cw, ch), Image.Resampling.LANCZOS)
+
+    composite = mask_overlay(overlay_base, person, clothes)
 
     return {
         "background": display_bg,
@@ -348,7 +380,7 @@ def parse_editor_masks(
     bg_raw = editor.get("background")
     if bg_raw is None:
         comp = editor.get("composite")
-        if isinstance(comp, (str, dict)):
+        if isinstance(comp, str | dict):
             bg_raw = comp
     if bg_raw is None:
         return None, None, None
