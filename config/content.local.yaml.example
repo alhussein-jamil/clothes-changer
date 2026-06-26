@@ -1,0 +1,14 @@
+# Copy to content.local.yaml to override prompts, branding, or model defaults.
+# content.local.yaml is gitignored — safe for local/custom wording.
+#
+#   cp config/content.local.yaml.example config/content.local.yaml
+#
+# app:
+#   name: My Local App Name
+#
+# prompts:
+#   default: "your custom positive prompt"
+#   negative: "your custom negative prompt"
+#
+# models:
+#   default_inpaint: realisticVisionV60B1_v51HyperInpaintVAE.safetensors

@@ -1,0 +1,36 @@
+app:
+  name: Clothes Changer
+  tagline: AI outfit inpainting — replace or edit clothing in photos
+
+prompts:
+  default: >-
+    athletic, abs, toned, natural, perfect detailed nipples, nude, high quality,
+    natural skin, normal light, high definition, extreme details, stretch marks,
+    clear, slender, naked, busty, skin details, photography, professional,
+    phone camera, detailed, high quality, goose bumps, saggy, erotic, sensual,
+    realistic
+  negative: >-
+    worst quality, low quality, bad, illustration, tattoos, chains, absurde,
+    marks, strings, piercings, 3d, 2d, painting, cartoons, sketch, open mouth,
+    lowres, text, error, cropped, worst quality, low quality, jpeg artifacts,
+    ugly, duplicate, morbid, mutilated, out of frame, extra fingers, mutated
+    hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry,
+    dehydrated, bad anatomy, bad proportions, extra limbs, cloned face,
+    disfigured, gross proportions, malformed limbs, missing arms, missing legs,
+    extra arms, extra legs, fused fingers, too many fingers, long neck,
+    username, watermark, signature, (((hand))), (((fingers))), (((finger))),
+    weird feet, hands, disfigured, overexposed, oversaturated, mutated body
+    parts, bad composition, low resolution
+
+models:
+  default_inpaint: realisticVisionV60B1_v51HyperInpaintVAE.safetensors
+  download_urls:
+    realisticVisionV60B1_v51HyperInpaintVAE.safetensors: >-
+      https://civitai.com/api/download/models/501286
+
+ui:
+  title_html: |
+    <div style="text-align:center;padding:16px 0">
+      <h1 style="margin:0;font-size:2em">Clothes Changer</h1>
+      <p style="margin:8px 0 0;color:#666">AI outfit inpainting</p>
+    </div>
