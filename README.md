@@ -1,79 +1,161 @@
-# Clothes Changer
+# Outfit Studio
 
-AI outfit inpainting: upload a photo, auto-segment clothing, edit the mask, and inpaint a new outfit with Stable Diffusion.
+<p align="center">
+  <img src="static/outfit-studio-logo.svg" alt="Outfit Studio logo" width="560" />
+</p>
+
+![Fantasy clothing transformation](docs/assets/fantasy-clothes-magic.png)
+
+AI outfit inpainting for photos. Upload a person image, segment the person and clothing,
+optionally edit the masks, then inpaint a new outfit with Stable Diffusion.
+
+The README demo assets are synthetic, fully clothed, and non-explicit. They show the
+vanilla repository path using `runwayml/stable-diffusion-inpainting` with ControlNet
+disabled.
+
+![Outfit Studio pipeline overview](docs/assets/pipeline-overview.svg)
+
+## What this repo does
+
+- Serves a Gradio UI with login, credits, examples, history, and an ImageEditor mask
+  workflow.
+- Uses SegFormer B2 plus U2NET to build person and clothing masks automatically.
+- Lets users repaint masks before generation, so the model changes only intended
+  clothing regions.
+- Runs Diffusers inpainting with SD1.5, SDXL, or local `.safetensors` / `.ckpt`
+  checkpoints.
+- Optionally adds OpenPose ControlNet guidance for SD1.5 checkpoints.
+- Saves pipeline debug artifacts for masks, crops, inpaint inputs, diffusion output,
+  blending, metadata, and final results.
+
+## Vanilla demo
+
+This walkthrough was produced from a fresh non-NSFW synthetic source image, then passed
+through the real pipeline with:
+
+- model: `runwayml/stable-diffusion-inpainting`
+- ControlNet: off
+- seed: `4242`
+- steps: `24`
+- prompt target: a modest, fully clothed editorial outfit
+
+![Vanilla pipeline walkthrough](docs/assets/demo-pipeline-walkthrough.png)
+
+The green overlay marks clothing pixels selected for inpainting; the red overlay marks
+the detected person area used for instance splitting and blending. Vanilla SD1.5 changes
+the outfit region cleanly, while custom checkpoints and ControlNet can improve style
+faithfulness for production use.
+
+Useful demo files:
+
+| File | Purpose |
+|------|---------|
+| `docs/assets/demo-source.png` | Synthetic, fully clothed input image |
+| `docs/assets/demo-mask-overlay.png` | Person and clothing masks from segmentation |
+| `docs/assets/demo-inpaint-input.png` | Crop prepared for inpainting |
+| `docs/assets/demo-diffusion-output.png` | Raw vanilla SD1.5 inpaint result |
+| `docs/assets/demo-blended-crop.png` | Feathered crop before full-frame compositing |
+| `docs/assets/demo-result-vanilla-sd15.png` | Final feathered full-frame blend |
+
+## Debug artifacts
+
+Add these lines to `.env` when you want inspectable intermediates for a run:
+
+```dotenv
+OUTFIT_STUDIO_PIPELINE_DEBUG=true
+OUTFIT_STUDIO_PIPELINE_DEBUG_DIR=debug-pipeline
+```
+
+![Pipeline debug artifact map](docs/assets/debug-artifacts.svg)
+
+Each run creates a timestamped folder. The segmentation phase records source and fused
+masks; the generation phase records the final masks, per-person crop, inpaint input,
+diffusion output, blended crop, full composite, and JSON metadata.
 
 ## Requirements
 
-- Python 3.10–3.12
+- Python 3.10-3.12
 - [uv](https://github.com/astral-sh/uv)
-- NVIDIA GPU recommended (8 GB+ VRAM for SD1.5 inpainting)
+- NVIDIA GPU recommended
+- 8 GB+ VRAM recommended for SD1.5 inpainting
 
 ## Quick start
 
 ```bash
-cd clothes-changer
 cp .env.example .env
-make install-fast    # CUDA torch, ONNX GPU, downloads segmentation + default inpaint model
-make run             # http://localhost:7860
+make install-fast
+make run
 ```
 
-Default login: `admin` / `admin`
+Open `http://localhost:7860`.
+
+Default login:
+
+```text
+admin / admin
+```
+
+`make install-fast` creates the virtual environment, installs CUDA PyTorch and ONNX
+Runtime GPU support, and downloads the configured segmentation and inpaint models.
 
 ## Make targets
 
 | Target | Description |
 |--------|-------------|
-| `make install` | Create venv and install Python deps |
-| `make install-fast` | Above + CUDA PyTorch, ONNX GPU, model download |
-| `make download-models` | Segmentation weights + default inpaint checkpoint |
+| `make install` | Create `.venv` and install Python dependencies |
+| `make install-fast` | Install deps, CUDA PyTorch, ONNX GPU support, and models |
+| `make download-models` | Download segmentation weights and configured inpaint checkpoint |
 | `make run` | Start the Gradio UI |
-| `make test` | Run unit tests |
-| `make lint` | Ruff check |
+| `make test` | Run non-slow unit tests |
+| `make lint` | Run Ruff |
 
 ## Configuration
 
-### Runtime (`.env`)
+### Runtime `.env`
 
-Deployment settings only — host, ports, paths, auth, debug flags. See `.env.example`.
+Deployment settings live in `.env`: host, port, paths, auth, credits, logging, and
+pipeline debug flags.
 
 | Setting | Purpose |
 |---------|---------|
-| `CLOTHES_CHANGER_HOST` / `PORT` | Server bind address |
-| `CLOTHES_CHANGER_MODELS_DIR` / `OUTPUT_DIR` / `DB_PATH` | Local paths |
-| `CLOTHES_CHANGER_DEFAULT_*` / `REQUIRE_AUTH` | Login and credits |
-| `CLOTHES_CHANGER_DEBUG` / `LOG_LEVEL` / `PIPELINE_DEBUG*` | Diagnostics |
+| `OUTFIT_STUDIO_HOST` / `OUTFIT_STUDIO_PORT` | Server bind address |
+| `OUTFIT_STUDIO_MODELS_DIR` | Local model/checkpoint directory |
+| `OUTFIT_STUDIO_OUTPUT_DIR` | Generated image output directory |
+| `OUTFIT_STUDIO_DB_PATH` | SQLite database path |
+| `OUTFIT_STUDIO_REQUIRE_AUTH` | Login requirement |
+| `OUTFIT_STUDIO_DEFAULT_*` | Default admin and credit settings |
+| `OUTFIT_STUDIO_DEBUG` / `OUTFIT_STUDIO_LOG_LEVEL` | Diagnostics |
+| `OUTFIT_STUDIO_PIPELINE_DEBUG*` | Intermediate artifact dumps |
 
-Models, prompts, and generation defaults are **not** in `.env`.
+Models, prompts, and generation defaults are intentionally not stored in `.env`.
 
-### Content / ML (`config/`)
+### Content and ML YAML
 
-Branding, prompts, checkpoints, and generation tuning live in YAML:
+Branding, prompts, checkpoints, and generation tuning live in `config/`.
 
 | File | Tracked | Purpose |
 |------|---------|---------|
-| `config/content.default.yaml` | Yes | Safe vanilla defaults shipped with the repo |
-| `config/content.local.yaml` | No (gitignored) | Local overrides — prompts, default checkpoint, download URLs |
+| `config/content.default.yaml` | Yes | Vanilla defaults shipped with the repo |
+| `config/content.local.yaml` | No | Local overrides for prompts, models, URLs, and generation tuning |
 | `config/content.local.yaml.example` | Yes | Template for local overrides |
 
 ```bash
 cp config/content.local.yaml.example config/content.local.yaml
-# edit config/content.local.yaml — models.default_inpaint, prompts, generation, etc.
 ```
 
-Local YAML merges on top of the default file.
-
-**Shipped default checkpoint:** `runwayml/stable-diffusion-inpainting` (Hugging Face).
-
-**Local example** sets `cyberrealistic_v80Inpainting.safetensors` with Civitai download URLs. After copying, `make download-models` fetches the configured default into `./models/`.
+The local YAML file is merged on top of the default file. The shipped default inpaint
+checkpoint is `runwayml/stable-diffusion-inpainting`; the local example can point at
+custom `.safetensors` checkpoints and download URLs.
 
 ## Stack
 
 | Component | Technology |
-|-----------|-------------|
+|-----------|------------|
 | UI | Gradio 4 + ImageSlider |
 | Segmentation | SegFormer B2 + U2NET |
-| Pose (optional) | rtmlib ONNX + ControlNet OpenPose |
-| Inpainting | Diffusers SD1.5 inpaint |
+| Pose, optional | rtmlib ONNX + ControlNet OpenPose |
+| Inpainting | Diffusers SD1.5 / SDXL inpaint |
+| Auth/history | SQLite + Argon2 |
 
 ## Development
 
@@ -84,9 +166,9 @@ pre-commit install
 pre-commit run --all-files
 ```
 
-## CLI
+Python entry points:
 
 ```bash
-.venv/bin/clothes-changer-download-models
-.venv/bin/clothes-changer
+.venv/bin/outfit-studio-download-models
+.venv/bin/outfit-studio
 ```

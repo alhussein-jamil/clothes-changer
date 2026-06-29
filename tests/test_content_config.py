@@ -1,4 +1,4 @@
-from clothes_changer.content_config import (
+from outfit_studio.content_config import (
     clear_content_config_cache,
     get_app_name,
     get_default_inpaint_model,
@@ -10,20 +10,20 @@ from clothes_changer.content_config import (
 def test_content_config_defaults(tmp_path, monkeypatch):
     default = tmp_path / "content.default.yaml"
     default.write_text(
-        "app:\n  name: Clothes Changer\n"
+        "app:\n  name: Outfit Studio\n"
         "prompts:\n  default: high quality clothing\n"
-        "ui:\n  title_html: '<h1>Clothes Changer</h1>'\n",
+        "ui:\n  title_html: '<h1>Outfit Studio</h1>'\n",
         encoding="utf-8",
     )
     missing = tmp_path / "content.local.yaml"
-    monkeypatch.setattr("clothes_changer.content_config._CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("clothes_changer.content_config._DEFAULT_FILE", default)
-    monkeypatch.setattr("clothes_changer.content_config._LOCAL_FILE", missing)
+    monkeypatch.setattr("outfit_studio.content_config._CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("outfit_studio.content_config._DEFAULT_FILE", default)
+    monkeypatch.setattr("outfit_studio.content_config._LOCAL_FILE", missing)
     clear_content_config_cache()
 
-    assert get_app_name() == "Clothes Changer"
+    assert get_app_name() == "Outfit Studio"
     assert "clothing" in get_default_prompt().lower()
-    assert "Clothes Changer" in get_title_html()
+    assert "Outfit Studio" in get_title_html()
 
 
 def test_content_config_local_override(tmp_path, monkeypatch):
@@ -37,9 +37,9 @@ def test_content_config_local_override(tmp_path, monkeypatch):
         "app:\n  name: Local Override\nprompts:\n  default: custom prompt\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr("clothes_changer.content_config._CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("clothes_changer.content_config._DEFAULT_FILE", default)
-    monkeypatch.setattr("clothes_changer.content_config._LOCAL_FILE", local)
+    monkeypatch.setattr("outfit_studio.content_config._CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("outfit_studio.content_config._DEFAULT_FILE", default)
+    monkeypatch.setattr("outfit_studio.content_config._LOCAL_FILE", local)
     clear_content_config_cache()
 
     assert get_app_name() == "Local Override"
@@ -54,9 +54,9 @@ def test_shipped_default_inpaint_is_hub_model(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     missing = tmp_path / "content.local.yaml"
-    monkeypatch.setattr("clothes_changer.content_config._CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("clothes_changer.content_config._DEFAULT_FILE", default)
-    monkeypatch.setattr("clothes_changer.content_config._LOCAL_FILE", missing)
+    monkeypatch.setattr("outfit_studio.content_config._CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("outfit_studio.content_config._DEFAULT_FILE", default)
+    monkeypatch.setattr("outfit_studio.content_config._LOCAL_FILE", missing)
     clear_content_config_cache()
 
     assert get_default_inpaint_model() == "runwayml/stable-diffusion-inpainting"
@@ -84,12 +84,12 @@ def test_ml_defaults_from_yaml(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     missing = tmp_path / "content.local.yaml"
-    monkeypatch.setattr("clothes_changer.content_config._CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("clothes_changer.content_config._DEFAULT_FILE", default)
-    monkeypatch.setattr("clothes_changer.content_config._LOCAL_FILE", missing)
+    monkeypatch.setattr("outfit_studio.content_config._CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("outfit_studio.content_config._DEFAULT_FILE", default)
+    monkeypatch.setattr("outfit_studio.content_config._LOCAL_FILE", missing)
     clear_content_config_cache()
 
-    from clothes_changer.content_config import (
+    from outfit_studio.content_config import (
         get_controlnet_model,
         get_detection_threshold,
         get_extra_clothes_model,
@@ -124,12 +124,12 @@ def test_settings_reads_inpaint_from_yaml_not_env(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     missing = tmp_path / "content.local.yaml"
-    monkeypatch.setattr("clothes_changer.content_config._CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("clothes_changer.content_config._DEFAULT_FILE", default)
-    monkeypatch.setattr("clothes_changer.content_config._LOCAL_FILE", missing)
-    monkeypatch.setenv("CLOTHES_CHANGER_INPAINT_MODEL", "env-model.safetensors")
+    monkeypatch.setattr("outfit_studio.content_config._CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("outfit_studio.content_config._DEFAULT_FILE", default)
+    monkeypatch.setattr("outfit_studio.content_config._LOCAL_FILE", missing)
+    monkeypatch.setenv("OUTFIT_STUDIO_INPAINT_MODEL", "env-model.safetensors")
 
-    from clothes_changer.config import get_settings
+    from outfit_studio.config import get_settings
 
     clear_content_config_cache()
     get_settings.cache_clear()

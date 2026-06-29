@@ -5,8 +5,8 @@ import torch
 from PIL import Image
 from safetensors.torch import save_file
 
-from clothes_changer.ml.checkpoints import is_sdxl_checkpoint
-from clothes_changer.ml.inpainter import InpaintEngine
+from outfit_studio.ml.checkpoints import is_sdxl_checkpoint
+from outfit_studio.ml.inpainter import InpaintEngine
 
 
 def test_is_sdxl_detection_by_name():
@@ -22,13 +22,13 @@ def test_list_local_models_from_env(monkeypatch):
     ):
         save_file({"unet.weight": torch.zeros(1)}, tmp / name)
 
-    monkeypatch.setenv("CLOTHES_CHANGER_MODELS_DIR", str(tmp))
+    monkeypatch.setenv("OUTFIT_STUDIO_MODELS_DIR", str(tmp))
     monkeypatch.setattr(
-        "clothes_changer.content_config.get_default_inpaint_model",
+        "outfit_studio.content_config.get_default_inpaint_model",
         lambda: "outfit_inpaint_v1.safetensors",
     )
-    from clothes_changer.config import get_settings
-    from clothes_changer.content_config import clear_content_config_cache
+    from outfit_studio.config import get_settings
+    from outfit_studio.content_config import clear_content_config_cache
 
     clear_content_config_cache()
     get_settings.cache_clear()

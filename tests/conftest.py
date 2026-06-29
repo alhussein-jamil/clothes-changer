@@ -10,14 +10,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 _tmp = tempfile.mkdtemp()
-os.environ["CLOTHES_CHANGER_DB_PATH"] = str(Path(_tmp) / "test.db")
-os.environ["CLOTHES_CHANGER_OUTPUT_DIR"] = str(Path(_tmp) / "outputs")
-os.environ["CLOTHES_CHANGER_REQUIRE_AUTH"] = "false"
-os.environ["CLOTHES_CHANGER_MODELS_DIR"] = str(Path(_tmp) / "models")
+os.environ["OUTFIT_STUDIO_DB_PATH"] = str(Path(_tmp) / "test.db")
+os.environ["OUTFIT_STUDIO_OUTPUT_DIR"] = str(Path(_tmp) / "outputs")
+os.environ["OUTFIT_STUDIO_REQUIRE_AUTH"] = "false"
+os.environ["OUTFIT_STUDIO_MODELS_DIR"] = str(Path(_tmp) / "models")
 
 
 def _reset_caches() -> None:
-    from clothes_changer.config import get_settings
+    from outfit_studio.config import get_settings
 
     get_settings.cache_clear()
 
@@ -27,6 +27,6 @@ _reset_caches()
 
 @pytest.fixture
 def db():
-    from clothes_changer.db.database import Database
+    from outfit_studio.db.database import Database
 
     return Database()

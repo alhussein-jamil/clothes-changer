@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">Outfit Studio icon</title>
+  <defs>
+    <linearGradient id="coat" x1="24" y1="24" x2="104" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#10243f"/>
+      <stop offset="0.58" stop-color="#0f6f7d"/>
+      <stop offset="1" stop-color="#28a6a4"/>
+    </linearGradient>
+    <linearGradient id="thread" x1="20" y1="96" x2="112" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d9972d"/>
+      <stop offset="0.52" stop-color="#ffd979"/>
+      <stop offset="1" stop-color="#e8a53a"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="#fbfaf7"/>
+  <path d="M64 28 C64 18 78 18 78 31 C78 42 65 42 65 52" fill="none" stroke="#10243f" stroke-width="8" stroke-linecap="round"/>
+  <path d="M65 50 C84 52 100 67 105 90 L112 121 H73 L65 69 Z" fill="#1492a0"/>
+  <path d="M63 50 C44 52 28 67 23 90 L16 121 H55 L63 69 Z" fill="#10243f"/>
+  <path d="M44 65 C54 60 74 60 84 65" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+  <path d="M51 66 L64 118 L77 66" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M24 96 C50 120 83 83 108 63" fill="none" stroke="url(#thread)" stroke-width="8" stroke-linecap="round"/>
+  <path d="M106 48 L111 60 L123 65 L111 70 L106 82 L101 70 L89 65 L101 60 Z" fill="#efb84f"/>
+</svg>

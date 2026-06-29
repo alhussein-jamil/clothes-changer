@@ -1,15 +1,15 @@
 import numpy as np
 from PIL import Image
 
-from clothes_changer.ui.constants import EDITOR_CANVAS_SIZE
-from clothes_changer.ui.editor_session import (
+from outfit_studio.constants import EDITOR_CANVAS_SIZE
+from outfit_studio.ui.editor_session import (
     EditorSession,
     UploadSegmentAction,
     evaluate_upload_segment,
     resolve_clean_on_upload,
 )
-from clothes_changer.ui.masks import apply_masks_to_editor, background_key_from_image
-from clothes_changer.utils.image import mask_overlay
+from outfit_studio.ui.masks import apply_masks_to_editor, background_key_from_image
+from outfit_studio.utils.image import mask_overlay
 
 
 def test_session_cleared_fields():

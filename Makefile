@@ -24,16 +24,16 @@ install-fast: install
 	$(MAKE) download-models
 
 download-models:
-	$(PYTHON) -m clothes_changer.scripts.download_models
+	$(PYTHON) -m outfit_studio.scripts.download_models
 
 run:
-	$(PYTHON) -m clothes_changer.main
+	$(PYTHON) -m outfit_studio.main
 
 test:
 	$(PYTHON) -m pytest tests/ -v -m "not slow"
 
 lint:
-	$(VENV)/bin/ruff check clothes_changer tests
+	$(VENV)/bin/ruff check outfit_studio tests
 
 clean:
 	rm -rf $(VENV) .pytest_cache .ruff_cache dist *.egg-info

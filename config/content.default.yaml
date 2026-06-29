@@ -1,5 +1,5 @@
 app:
-  name: Clothes Changer
+  name: Outfit Studio
   tagline: AI outfit inpainting — replace or edit clothing in photos
 
 prompts:
@@ -31,8 +31,9 @@ pose:
   mode: balanced
 
 ui:
+  # Fallback header when static/outfit-studio-logo.svg is missing.
   title_html: |
     <div style="text-align:center;padding:16px 0">
-      <h1 style="margin:0;font-size:2em">Clothes Changer</h1>
+      <h1 style="margin:0;font-size:2em">Outfit Studio</h1>
       <p style="margin:8px 0 0;color:#666">AI outfit inpainting</p>
     </div>

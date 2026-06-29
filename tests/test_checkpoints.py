@@ -3,7 +3,7 @@ from pathlib import Path
 import torch
 from safetensors.torch import save_file
 
-from clothes_changer.ml.checkpoints import (
+from outfit_studio.ml.checkpoints import (
     checkpoint_architecture,
     cloth_segm_checkpoint_valid,
     inpaint_checkpoint_valid,
