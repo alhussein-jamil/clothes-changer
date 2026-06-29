@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 
 from outfit_studio.constants import EDITOR_CANVAS_SIZE
-from outfit_studio.ui.gradio_app import GradioApp
+from outfit_studio.ui.gradio_app import GradioApp, build_header_html
 from outfit_studio.ui.masks import apply_masks_to_editor, background_key_from_image
 from outfit_studio.utils.image import mask_overlay
 
@@ -15,6 +15,16 @@ def test_authenticate(db):
     db.register_user("user1", "password123", credits=5)
     assert app.authenticate("user1", "password123")
     assert not app.authenticate("user1", "wrong")
+
+
+def test_build_header_html_inlines_svg_logo():
+    settings = GradioApp().settings
+    html = build_header_html(settings)
+    assert settings.resolved_logo_path.suffix.lower() == ".svg"
+    assert "<svg" in html
+    assert 'src="/file=' not in html
+    assert "app-header-logo--light" in html
+    assert "app-header-logo--dark" in html
 
 
 def _editor_value(update: dict) -> dict:

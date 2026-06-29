@@ -99,9 +99,22 @@ CUSTOM_CSS = f"""
   width: 100% !important;
   text-align: center !important;
 }}
-#app-header img {{
+#app-header img,
+#app-header .app-header-logo svg {{
   display: block !important;
   margin: 0 auto 12px !important;
+  max-width: min({UI.LOGO_MAX_WIDTH_PX}px, 100%);
+  height: auto;
+  max-height: {UI.LOGO_MAX_HEIGHT_PX}px;
+}}
+#app-header .app-header-logo--dark {{
+  display: none;
+}}
+.dark #app-header .app-header-logo--light {{
+  display: none !important;
+}}
+.dark #app-header .app-header-logo--dark {{
+  display: block !important;
 }}
 """
 

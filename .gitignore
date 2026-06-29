@@ -9,8 +9,10 @@ dist/
 *.db
 models/
 outputs/
+examples/
 models
 outputs
+examples
 config/content.local.yaml
 my_debug/
 debug/

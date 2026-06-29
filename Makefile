@@ -1,4 +1,4 @@
-.PHONY: install install-fast download-models run test lint clean
+.PHONY: install install-fast download-models run test lint clean add-user
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -34,6 +34,17 @@ test:
 
 lint:
 	$(VENV)/bin/ruff check outfit_studio tests
+
+add-user:
+ifndef USER
+	$(error Usage: make add-user USER=name PASS=password [CREDITS=10] [ADMIN=true])
+endif
+ifndef PASS
+	$(error Usage: make add-user USER=name PASS=password [CREDITS=10] [ADMIN=true])
+endif
+	$(PYTHON) scripts/add_user.py $(USER) $(PASS) \
+		$(if $(CREDITS),--credits $(CREDITS),) \
+		$(if $(filter true yes 1,$(ADMIN)),--admin,)
 
 clean:
 	rm -rf $(VENV) .pytest_cache .ruff_cache dist *.egg-info

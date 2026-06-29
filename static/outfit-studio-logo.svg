@@ -2,12 +2,12 @@
   <title id="title">Outfit Studio logo</title>
   <desc id="desc">A coat on a hanger with a gold magic thread and the Outfit Studio wordmark.</desc>
   <defs>
-    <linearGradient id="coat" x1="38" y1="44" x2="140" y2="146" gradientUnits="userSpaceOnUse">
+    <linearGradient id="os-logo-coat" x1="38" y1="44" x2="140" y2="146" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#10243f"/>
       <stop offset="0.58" stop-color="#0f6f7d"/>
       <stop offset="1" stop-color="#28a6a4"/>
     </linearGradient>
-    <linearGradient id="thread" x1="40" y1="136" x2="160" y2="66" gradientUnits="userSpaceOnUse">
+    <linearGradient id="os-logo-thread" x1="40" y1="136" x2="160" y2="66" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#d9972d"/>
       <stop offset="0.5" stop-color="#ffd979"/>
       <stop offset="1" stop-color="#e8a53a"/>
@@ -23,8 +23,8 @@
     <path d="M72 58 H72 C51 60 33 76 27 101 L18 138 H63 L72 78 Z" fill="#10243f"/>
     <path d="M50 72 C61 67 83 67 94 72" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
     <path d="M58 72 L72 133 L86 72" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M32 111 C60 143 100 103 126 83" fill="none" stroke="url(#thread)" stroke-width="8" stroke-linecap="round"/>
-    <path d="M126 83 C133 77 139 70 142 62" fill="none" stroke="url(#thread)" stroke-width="5" stroke-linecap="round"/>
+    <path d="M32 111 C60 143 100 103 126 83" fill="none" stroke="url(#os-logo-thread)" stroke-width="8" stroke-linecap="round"/>
+    <path d="M126 83 C133 77 139 70 142 62" fill="none" stroke="url(#os-logo-thread)" stroke-width="5" stroke-linecap="round"/>
     <path d="M142 49 L147 62 L160 67 L147 72 L142 85 L137 72 L124 67 L137 62 Z" fill="#efb84f"/>
     <circle cx="132" cy="105" r="4" fill="#efb84f"/>
     <circle cx="150" cy="102" r="3" fill="#1492a0"/>

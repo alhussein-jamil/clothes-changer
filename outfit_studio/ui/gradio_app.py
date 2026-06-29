@@ -66,20 +66,45 @@ class SegmentationResult(NamedTuple):
     debug_session_dir: str | None
 
 
+def _logo_dark_path(logo: Path) -> Path:
+    return logo.with_name(f"{logo.stem}-dark{logo.suffix}")
+
+
 def build_header_html(settings: Settings) -> str:
     """Page header with wordmark logo from ``static/`` when available."""
     logo = settings.resolved_logo_path
     name = get_app_name()
 
     if logo.is_file():
+        logo_style = (
+            f"max-width:min({UI.LOGO_MAX_WIDTH_PX}px,100%);"
+            f"height:auto;max-height:{UI.LOGO_MAX_HEIGHT_PX}px"
+        )
+        if logo.suffix.lower() == ".svg":
+            # Gradio serves SVG via /file= as an attachment (XSS hardening), so
+            # browsers won't render it in <img>. Inline the markup instead.
+            parts = [
+                '<div class="app-header" style="text-align:center;padding:16px 0">',
+                (
+                    '<div class="app-header-logo app-header-logo--light">'
+                    f"{logo.read_text(encoding='utf-8').strip()}"
+                    "</div>"
+                ),
+            ]
+            dark_logo = _logo_dark_path(logo)
+            if dark_logo.is_file():
+                parts.append(
+                    '<div class="app-header-logo app-header-logo--dark">'
+                    f"{dark_logo.read_text(encoding='utf-8').strip()}"
+                    "</div>"
+                )
+            parts.append("</div>")
+            return "\n".join(parts)
+
         return "\n".join(
             [
                 '<div class="app-header" style="text-align:center;padding:16px 0">',
-                (
-                    f'<img src="/file={logo}" alt="{name}" '
-                    f'style="max-width:min({UI.LOGO_MAX_WIDTH_PX}px,100%);'
-                    f'height:auto;max-height:{UI.LOGO_MAX_HEIGHT_PX}px" />'
-                ),
+                f'<img src="/file={logo}" alt="{name}" style="{logo_style}" />',
                 "</div>",
             ]
         )
@@ -842,7 +867,11 @@ class GradioApp:
         return self.history_images(request)
 
     def create_ui(self) -> gr.Blocks:
-        with gr.Blocks(css=CUSTOM_CSS, title=get_app_name()) as demo:
+        with gr.Blocks(
+            css=CUSTOM_CSS,
+            title=get_app_name(),
+            theme="Maani/MonoNeo",
+        ) as demo:
             gr.HTML(build_header_html(self.settings), elem_id="app-header")
 
             with gr.Tabs() as main_tabs:
@@ -850,6 +879,8 @@ class GradioApp:
                     with gr.Row():
                         user_info = gr.Textbox(show_label=False, interactive=False)
                         credits_info = gr.Textbox(show_label=False, interactive=False)
+                        if self.settings.require_auth:
+                            gr.Button("Logout", link="/logout", size="sm")
 
                     with gr.Row(equal_height=True):
                         with gr.Column(scale=1):
@@ -1124,6 +1155,9 @@ class GradioApp:
         logo = self.settings.resolved_logo_path
         if logo.is_file():
             paths.add(logo)
+            dark_logo = _logo_dark_path(logo)
+            if dark_logo.is_file():
+                paths.add(dark_logo)
         favicon = self.settings.resolved_favicon_path
         if favicon.is_file():
             paths.add(favicon)
