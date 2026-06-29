@@ -27,6 +27,12 @@ models:
   download_urls:
     realisticVisionV60B1_v51HyperInpaintVAE.safetensors: >-
       https://civitai.com/api/download/models/501286
+    realisticVisionV60B1_v51HyperInpaintVAE_full.safetensors: >-
+      https://civitai.com/api/download/models/501286
+    lazymixRealAmateur_v40Inpainting.safetensors: >-
+      https://civitai.com/api/download/models/302254
+    clarity_V3-inpainting.safetensors: >-
+      https://civitai.com/api/download/models/145163
 
 ui:
   title_html: |

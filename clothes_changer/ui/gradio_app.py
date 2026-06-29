@@ -23,7 +23,7 @@ from clothes_changer.content_config import (
 from clothes_changer.db.database import Database
 from clothes_changer.ml.inpainter import get_inpaint_engine
 from clothes_changer.ml.pipeline import get_pipeline
-from clothes_changer.ui.constants import CLOTHES_COLOR, CUSTOM_CSS, PERSON_COLOR, SEED_MAX
+from clothes_changer.ui.constants import CLOTHES_COLOR, CUSTOM_CSS, EDITOR_CANVAS_SIZE, PERSON_COLOR, SEED_MAX
 from clothes_changer.ui.masks import (
     apply_masks_to_editor,
     background_key_from_image,
@@ -232,11 +232,13 @@ class GradioApp:
     def _load_examples(self) -> list[str]:
         for candidate in (
             self.settings.resolved_examples_dir,
+            PROJECT_ROOT / "examples",
+            PROJECT_ROOT.parent / "Clothless" / "examples",
             PROJECT_ROOT.parent / "examples",
         ):
             if candidate.is_dir():
                 files = sorted(
-                    str(p)
+                    str(p.resolve())
                     for p in candidate.iterdir()
                     if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
                 )
@@ -245,6 +247,10 @@ class GradioApp:
                     return files[:12]
         logger.debug("No example images found")
         return []
+
+    def example_gallery_items(self) -> list[tuple[str, str]]:
+        """Gallery rows for sample inputs on the Generate tab."""
+        return [(path, Path(path).name) for path in self.examples]
 
     def _refresh_models(self) -> None:
         engine = get_inpaint_engine()
@@ -314,31 +320,50 @@ class GradioApp:
         logger.info("open_image: loaded %s (%sx%s)", path, image.width, image.height)
         return image
 
-    def _path_from_select(self, value: object) -> str | None:
+    def _path_from_select(self, value: object, index: int | None = None) -> str | None:
         if value is None:
             return None
         if isinstance(value, dict):
+            if "background" in value:
+                return file_path_from_editor(value)
+            for key in ("path", "name"):
+                if value.get(key):
+                    return str(value[key])
+            image = value.get("image")
+            if isinstance(image, dict):
+                for key in ("path", "name"):
+                    if image.get(key):
+                        return str(image[key])
             return file_path_from_editor(value)
         if isinstance(value, list | tuple):
-            # Dataset type="tuple" -> (index, sample); single input -> sample is [path]
+            # Gallery tuple: (path, caption) or nested FileData
+            if len(value) == 2 and isinstance(value[1], str) and isinstance(value[0], str):
+                candidate = value[0]
+                if Path(candidate).suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                    return candidate
             if len(value) == 2:
                 sample = value[1]
                 if isinstance(sample, dict):
-                    return file_path_from_editor(sample)
+                    return self._path_from_select(sample)
                 if isinstance(sample, list | tuple):
                     if not sample:
                         return None
                     first = sample[0]
                     if isinstance(first, dict):
-                        return file_path_from_editor(first)
+                        return self._path_from_select(first)
                     return str(first)
                 if isinstance(sample, str):
                     return sample
             first = value[0]
             if isinstance(first, dict):
-                return file_path_from_editor(first)
-            return str(first)
-        return str(value)
+                return self._path_from_select(first)
+            if isinstance(first, str):
+                return first
+        if isinstance(value, str):
+            return value
+        if index is not None and 0 <= index < len(self.examples):
+            return self.examples[index]
+        return None
 
     def _editor_from_select(self, value: object) -> dict | None:
         if isinstance(value, dict) and "background" in value:
@@ -494,7 +519,11 @@ class GradioApp:
         )
         if not evt.selected:
             return gr.update(), None, None, False, debug_session_dir
-        path = self._path_from_select(evt.value)
+        path = self._path_from_select(evt.value, evt.index)
+        if not path:
+            items = self.history_images(request)
+            if evt.index is not None and 0 <= evt.index < len(items):
+                path = items[evt.index][0]
         if not path:
             logger.warning("select_image_and_segment: could not parse path from %r", evt.value)
             return gr.update(), None, None, False, debug_session_dir
@@ -582,7 +611,7 @@ class GradioApp:
         debug_session_dir: str | None,
         request: gr.Request,
         progress: gr.Progress = gr.Progress(),
-    ) -> tuple[tuple[Image.Image, Image.Image] | None, int]:
+    ) -> tuple[tuple[Image.Image, Image.Image] | None, int, str | None]:
         username = self._session_username(request)
         logger.info(
             "generate: user=%r model=%r steps=%d cfg=%.1f controlnet=%s random_seed=%s",
@@ -610,7 +639,7 @@ class GradioApp:
         source, person_mask, clothes_mask = parse_editor_masks(editor)
         pipeline_image = self._pipeline_source(editor, clean_source, segment_key)
         if pipeline_image is None:
-            return None, seed
+            return None, seed, debug_session_dir
         source = pipeline_image
 
         if (
@@ -649,7 +678,7 @@ class GradioApp:
             progress(fraction, desc=desc)
 
         try:
-            result, filename = self.pipeline.generate(
+            result, filename, active_debug_dir = self.pipeline.generate(
                 image=source,
                 person_mask=person_mask,
                 clothes_mask=clothes_mask,
@@ -675,11 +704,28 @@ class GradioApp:
         self.db.log_image(username, filename, full_prompt)
         logger.info("generate: success → %s", filename)
 
-        return gr.update(value=(source, result.convert("RGB"))), actual_seed
+        return gr.update(value=(source, result.convert("RGB"))), actual_seed, active_debug_dir or debug_session_dir
 
-    def history_images(self, request: gr.Request) -> list[tuple[str, str]]:
+    @staticmethod
+    def _debug_status_update(debug_session_dir: str | None) -> gr.Markdown:
+        settings = get_settings()
+        if not settings.pipeline_debug:
+            return gr.update(visible=False)
+        if debug_session_dir:
+            return gr.update(
+                value=f"**Debug artifacts:** `{debug_session_dir}`",
+                visible=True,
+            )
+        return gr.update(
+            value="**Debug mode:** waiting for segmentation or generation…",
+            visible=True,
+        )
+
+    def history_images(self, request: gr.Request | None = None) -> list[tuple[str, str]]:
         """Return gallery items as (absolute_path, caption) tuples."""
         username = self._session_username(request)
+        if not username and not self.settings.require_auth:
+            username = self.settings.default_admin
         if not username:
             return []
 
@@ -740,6 +786,10 @@ class GradioApp:
             return self.history_images(request)
         return gr.update()
 
+    def history_gallery_value(self, request: gr.Request | None = None) -> list[tuple[str, str]]:
+        """Periodic / on-load refresh for the history gallery."""
+        return self.history_images(request)
+
     def create_ui(self) -> gr.Blocks:
         with gr.Blocks(css=CUSTOM_CSS, title=get_app_name()) as demo:
             gr.HTML(get_title_html())
@@ -759,7 +809,7 @@ class GradioApp:
                                 interactive=True,
                                 image_mode="RGBA",
                                 layers=False,
-                                fixed_canvas=False,
+                                canvas_size=EDITOR_CANVAS_SIZE,
                                 brush=gr.Brush(
                                     colors=[f"rgba{PERSON_COLOR}", f"rgba{CLOTHES_COLOR}"],
                                     color_mode="fixed",
@@ -770,8 +820,13 @@ class GradioApp:
                             clean_source = gr.State(value=None)
                             segment_key = gr.State(value=None)
                             skip_upload_segment = gr.State(value=False)
-                            example_index = gr.State(value=None)
                             debug_session_dir = gr.State(value=None)
+                            if self.settings.pipeline_debug:
+                                debug_status = gr.Markdown(
+                                    value="**Debug mode:** artifacts saved under `debug-pipeline/`",
+                                )
+                            else:
+                                debug_status = gr.Markdown(visible=False)
 
                         with gr.Column(scale=1):
                             result = ImageSlider(
@@ -784,9 +839,11 @@ class GradioApp:
                                 examples = gr.Examples(
                                     examples=self.examples,
                                     inputs=input_image,
+                                    label="Examples",
                                 )
                             else:
                                 examples = None
+                            example_index = gr.State(value=None)
 
                     with gr.Accordion("Model & prompts", open=True):
                         with gr.Row():
@@ -824,7 +881,9 @@ class GradioApp:
 
                 with gr.Tab("History"):
                     history_gallery = gr.Gallery(
-                        label="Your generations",
+                        value=self.history_gallery_value,
+                        every=10,
+                        label="Your generations — click to reload into the editor",
                         columns=4,
                         height=420,
                         object_fit="contain",
@@ -851,6 +910,7 @@ class GradioApp:
             demo.load(self._admin_panel_boot, None, [admin_panel, users_df])
             demo.load(self._user_label, None, user_info)
             demo.load(self._credits_label, None, credits_info)
+            demo.load(self.history_gallery_value, None, history_gallery)
             main_tabs.select(self._load_history_on_tab, None, history_gallery)
 
             history_refresh.click(self.history_images, None, history_gallery)
@@ -901,6 +961,10 @@ class GradioApp:
                     skip_upload_segment,
                     debug_session_dir,
                 ],
+            ).then(
+                self._debug_status_update,
+                debug_session_dir,
+                debug_status,
             )
 
             def reload_models() -> gr.Dropdown:
@@ -938,7 +1002,11 @@ class GradioApp:
                     random_seed,
                     debug_session_dir,
                 ],
-                [result, seed],
+                [result, seed, debug_session_dir],
+            ).then(
+                self._debug_status_update,
+                debug_session_dir,
+                debug_status,
             ).then(lambda: gr.update(visible=True), None, use_as_input).then(
                 self._credits_label, None, credits_info
             ).then(self.history_images, None, history_gallery)
@@ -970,6 +1038,10 @@ class GradioApp:
                         skip_upload_segment,
                         debug_session_dir,
                     ],
+                ).then(
+                    self._debug_status_update,
+                    debug_session_dir,
+                    debug_status,
                 )
 
         return demo
@@ -979,6 +1051,8 @@ class GradioApp:
             self.settings.resolved_output_dir,
             self.settings.resolved_models_dir,
             self.settings.resolved_examples_dir,
+            PROJECT_ROOT / "examples",
+            PROJECT_ROOT.parent / "Clothless" / "examples",
             PROJECT_ROOT.parent / "examples",
         }
         return [str(p.resolve()) for p in paths]

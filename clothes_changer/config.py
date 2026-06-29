@@ -62,7 +62,7 @@ class Settings(BaseSettings):
 
     # Pipeline debug dumps (images per step + run_metadata.json)
     pipeline_debug: bool = False
-    pipeline_debug_dir: Path = Path("/tmp/clothes-changer-pipeline")
+    pipeline_debug_dir: Path = Path("debug-pipeline")
 
     @field_validator("log_level", mode="before")
     @classmethod

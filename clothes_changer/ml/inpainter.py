@@ -27,6 +27,12 @@ from clothes_changer.utils.logging import log_duration
 
 logger = logging.getLogger(__name__)
 
+MODEL_ALIASES: dict[str, list[str]] = {
+    "realisticVisionV60B1_v51HyperInpaintVAE.safetensors": [
+        "realisticVisionV60B1_v51HyperInpaintVAE_full.safetensors",
+    ],
+}
+
 StepProgressCallback = Callable[[int, int], None]
 
 
@@ -63,7 +69,7 @@ class InpaintEngine:
                 all_names.append(name)
 
         for name in all_names:
-            path = self.settings.resolved_models_dir / name
+            path = self._resolve_local_model(name)
             arch = "sdxl" if path.is_file() and is_sdxl_checkpoint(name, path) else "sd15"
             source = "local" if path.is_file() else "download"
             models.append(
@@ -101,7 +107,7 @@ class InpaintEngine:
         return models[0]["id"]
 
     def model_architecture(self, model_id: str) -> str:
-        path = self.settings.resolved_models_dir / model_id
+        path = self._resolve_local_model(model_id)
         if path.is_file():
             return "sdxl" if is_sdxl_checkpoint(model_id, path) else "sd15"
         return "sd15"
@@ -134,8 +140,18 @@ class InpaintEngine:
                 bar.update(size)
         return model_path
 
+    def _resolve_local_model(self, model_id: str) -> Path:
+        primary = self.settings.resolved_models_dir / model_id
+        if primary.is_file():
+            return primary
+        for alias in MODEL_ALIASES.get(model_id, []):
+            alias_path = self.settings.resolved_models_dir / alias
+            if alias_path.is_file():
+                return alias_path
+        return primary
+
     def _resolve_model_path(self, model_id: str) -> str:
-        local = self.settings.resolved_models_dir / model_id
+        local = self._resolve_local_model(model_id)
         if local.is_file():
             return str(local)
         self.download_model(local)

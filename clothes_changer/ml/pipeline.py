@@ -420,7 +420,7 @@ class GenerationPipeline:
             debug.save_meta()
             logger.info("Pipeline debug artifacts → %s", active_dir or debug.root)
         report(1.0, "Complete")
-        return full_image, filename
+        return full_image, filename, active_dir
 
 
 _pipeline: GenerationPipeline | None = None

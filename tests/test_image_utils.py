@@ -164,7 +164,7 @@ def test_generation_skips_instances_without_clothes(monkeypatch):
         lambda: type("Engine", (), {"load": lambda *a, **k: None})(),
     )
 
-    result, _ = GenerationPipeline().generate(
+    result, _, _ = GenerationPipeline().generate(
         source,
         person_mask=person,
         clothes_mask=clothes,
@@ -215,7 +215,7 @@ def test_generation_preserves_source_size(monkeypatch):
         lambda: type("Engine", (), {"load": lambda *a, **k: None})(),
     )
 
-    result, _ = GenerationPipeline().generate(
+    result, _, _ = GenerationPipeline().generate(
         source,
         person_mask=person,
         clothes_mask=clothes,
