@@ -1,8 +1,8 @@
 import numpy as np
 from PIL import Image
 
-from clothes_changer.ui.constants import CLOTHES_COLOR, EDITOR_CANVAS_SIZE, PERSON_COLOR
-from clothes_changer.ui.masks import (
+from outfit_studio.constants import CLOTHES_COLOR, EDITOR_CANVAS_SIZE, PERSON_COLOR
+from outfit_studio.ui.masks import (
     apply_masks_to_editor,
     editor_mask_reset,
     letterbox_to_editor_canvas,
@@ -20,7 +20,7 @@ def test_letterbox_to_editor_canvas_centers_portrait():
 
 
 def test_letterbox_unletterbox_roundtrip():
-    from clothes_changer.ui.masks import letterbox_masks, unletterbox_masks
+    from outfit_studio.ui.masks import letterbox_masks, unletterbox_masks
 
     src_size = (800, 600)
     person = np.zeros((600, 800), dtype=np.uint8)
@@ -53,8 +53,8 @@ def test_apply_and_parse_roundtrip():
 
 
 def test_parse_masks_from_composite_when_layers_empty():
-    """Legacy fallback when Gradio sends composite but strips layers."""
-    from clothes_changer.utils.image import mask_overlay
+    """Fallback when Gradio sends composite but strips layers."""
+    from outfit_studio.utils.image import mask_overlay
 
     bg = Image.new("RGB", (64, 48), color=(100, 100, 100))
     person = np.zeros((48, 64), dtype=np.uint8)
@@ -72,8 +72,8 @@ def test_parse_masks_from_composite_when_layers_empty():
 
 
 def test_load_editor_clean_image_ignores_composite_overlay():
-    from clothes_changer.ui.masks import load_editor_clean_image
-    from clothes_changer.utils.image import mask_overlay
+    from outfit_studio.ui.masks import load_editor_clean_image
+    from outfit_studio.utils.image import mask_overlay
 
     bg = Image.new("RGB", (64, 48), color=(100, 100, 100))
     person = np.zeros((48, 64), dtype=np.uint8)

@@ -5,18 +5,19 @@ import argparse
 import logging
 import sys
 
-from clothes_changer.db.database import Database, DatabaseError
-from clothes_changer.utils import setup_logging
+from outfit_studio.constants import DEFAULT_NEW_USER_CREDITS
+from outfit_studio.db.database import Database, DatabaseError
+from outfit_studio.utils import setup_logging
 
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
     setup_logging()
-    parser = argparse.ArgumentParser(description="Add a Clothes Changer user")
+    parser = argparse.ArgumentParser(description="Add a Outfit Studio user")
     parser.add_argument("username")
     parser.add_argument("password")
-    parser.add_argument("--credits", type=int, default=10)
+    parser.add_argument("--credits", type=int, default=DEFAULT_NEW_USER_CREDITS)
     parser.add_argument("--admin", action="store_true")
     args = parser.parse_args()
 

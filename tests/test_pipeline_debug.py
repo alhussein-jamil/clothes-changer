@@ -3,14 +3,14 @@ import json
 import numpy as np
 from PIL import Image
 
-from clothes_changer.ml.pipeline_debug import PipelineDebugSession
+from outfit_studio.ml.pipeline_debug import PipelineDebugSession
 
 
 def test_pipeline_debug_session_writes_artifacts(tmp_path, monkeypatch):
-    from clothes_changer.config import get_settings
+    from outfit_studio.config import get_settings
 
-    monkeypatch.setenv("CLOTHES_CHANGER_PIPELINE_DEBUG", "true")
-    monkeypatch.setenv("CLOTHES_CHANGER_PIPELINE_DEBUG_DIR", str(tmp_path / "debug"))
+    monkeypatch.setenv("OUTFIT_STUDIO_PIPELINE_DEBUG", "true")
+    monkeypatch.setenv("OUTFIT_STUDIO_PIPELINE_DEBUG_DIR", str(tmp_path / "debug"))
     get_settings.cache_clear()
 
     session = PipelineDebugSession.create(get_settings(), "tester")
@@ -41,10 +41,10 @@ def test_pipeline_debug_session_writes_artifacts(tmp_path, monkeypatch):
 
 
 def test_open_or_create_unified_user_folder(tmp_path, monkeypatch):
-    from clothes_changer.config import get_settings
+    from outfit_studio.config import get_settings
 
-    monkeypatch.setenv("CLOTHES_CHANGER_PIPELINE_DEBUG", "true")
-    monkeypatch.setenv("CLOTHES_CHANGER_PIPELINE_DEBUG_DIR", str(tmp_path / "debug"))
+    monkeypatch.setenv("OUTFIT_STUDIO_PIPELINE_DEBUG", "true")
+    monkeypatch.setenv("OUTFIT_STUDIO_PIPELINE_DEBUG_DIR", str(tmp_path / "debug"))
     get_settings.cache_clear()
     settings = get_settings()
 
@@ -65,8 +65,8 @@ def test_open_or_create_unified_user_folder(tmp_path, monkeypatch):
 
 
 def test_pipeline_debug_disabled_by_default(monkeypatch):
-    from clothes_changer.config import get_settings
+    from outfit_studio.config import get_settings
 
-    monkeypatch.delenv("CLOTHES_CHANGER_PIPELINE_DEBUG", raising=False)
+    monkeypatch.setenv("OUTFIT_STUDIO_PIPELINE_DEBUG", "false")
     get_settings.cache_clear()
     assert PipelineDebugSession.create(get_settings(), "guest") is None

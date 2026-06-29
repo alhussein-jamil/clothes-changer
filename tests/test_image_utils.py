@@ -1,21 +1,20 @@
 import numpy as np
 from PIL import Image
 
-from clothes_changer.ml.segmentor import CLOTHES_CATEGORIES, PERSON_CATEGORIES
-from clothes_changer.utils.image import (
+from outfit_studio.constants import CLOTHES_SEGFORMER_CATEGORIES, PERSON_SEGFORMER_CATEGORIES
+from outfit_studio.utils.image import (
     blend_images_with_enhancements,
+    clip_bbox,
     get_bounding_box,
-    inpaint_mask_from_clothes,
     mask_overlay,
     prepare_instance_masks,
     resize_max,
-    separate_instances,
 )
 
 
 def test_segformer_category_constants():
-    assert 11 in PERSON_CATEGORIES  # sunglasses/glasses → person, not clothes
-    assert 4 in CLOTHES_CATEGORIES
+    assert 11 in PERSON_SEGFORMER_CATEGORIES  # sunglasses/glasses → person, not clothes
+    assert 4 in CLOTHES_SEGFORMER_CATEGORIES
 
 
 def test_resize_max():
@@ -24,14 +23,18 @@ def test_resize_max():
     assert max(out.size) == 1024
 
 
-def test_bounding_box_and_instances():
+def test_bounding_box_and_prepare_instances():
     person = np.zeros((50, 50), dtype=np.uint8)
     clothes = np.zeros((50, 50), dtype=np.uint8)
     person[10:30, 10:30] = 1
     clothes[15:25, 15:25] = 1
     bbox = get_bounding_box(person | clothes)
     assert bbox[0] == 10
-    instances = separate_instances(person, clothes)
+    instances = prepare_instance_masks(
+        person,
+        clothes,
+        np.array([[0, 0, 50, 50]], dtype=np.float32),
+    )
     assert len(instances) == 1
 
 
@@ -46,22 +49,61 @@ def test_prepare_instance_masks_per_bbox():
     assert instances[0][0].sum() > 0
 
 
-def test_clip_bbox_when_mask_wider_than_image():
-    from clothes_changer.utils.image import crop_square, pad_bbox
+def test_prepare_instance_masks_splits_two_people():
+    person = np.zeros((100, 100), dtype=np.uint8)
+    clothes = np.zeros((100, 100), dtype=np.uint8)
+    person[10:60, 5:40] = 1
+    person[10:60, 60:95] = 1
+    clothes[20:50, 15:30] = 1
+    clothes[20:50, 70:85] = 1
+    bboxes = np.array(
+        [[0, 0, 45, 100], [55, 0, 100, 100]],
+        dtype=np.float32,
+    )
+    instances = prepare_instance_masks(person, clothes, bboxes)
+    assert len(instances) == 2
+    left_person, left_clothes = instances[0]
+    right_person, right_clothes = instances[1]
+    assert left_clothes.sum() > 0
+    assert right_clothes.sum() > 0
+    assert left_clothes[:, 50:].sum() == 0
+    assert right_clothes[:, :50].sum() == 0
+    assert left_person[:, 50:].sum() == 0
+    assert right_person[:, :50].sum() == 0
 
+
+def test_prepare_instance_masks_splits_touching_with_mega_bbox():
+    """YOLO often returns one full-frame box plus a partial box for close pairs."""
+    person = np.zeros((80, 120), dtype=np.uint8)
+    clothes = np.zeros((80, 120), dtype=np.uint8)
+    y, x = np.ogrid[:80, :120]
+    left = (x - 35) ** 2 + (y - 40) ** 2 < 18**2
+    right = (x - 85) ** 2 + (y - 40) ** 2 < 18**2
+    person[left | right] = 1
+    clothes[left & (x < 40)] = 1
+    clothes[right & (x > 80)] = 1
+    bboxes = np.array(
+        [[0, 0, 119, 79], [70, 10, 110, 70]],
+        dtype=np.float32,
+    )
+    instances = prepare_instance_masks(person, clothes, bboxes)
+    assert len(instances) == 2
+    left_person = int(instances[0][0].sum())
+    right_person = int(instances[1][0].sum())
+    assert left_person > 0
+    assert right_person > 0
+    assert min(left_person, right_person) / max(left_person, right_person) > 0.2
+
+
+def test_clip_bbox_when_mask_wider_than_image():
     bbox = (100, 400, 400, 700)
-    clipped = pad_bbox(bbox, (576, 384))
+    clipped = clip_bbox(bbox, (576, 384))
     assert clipped[1] < clipped[3]
     assert clipped[0] < clipped[2]
 
-    img = Image.new("RGB", (384, 576))
-    mask = np.zeros((576, 384), dtype=np.uint8)
-    mask[100:400, 50:350] = 1
-    crop_square(img, mask, clipped)
-
 
 def test_align_masks_resizes():
-    from clothes_changer.utils.image import align_masks
+    from outfit_studio.utils.image import align_masks
 
     person = np.ones((100, 200), dtype=np.uint8)
     clothes = np.zeros((100, 200), dtype=np.uint8)
@@ -103,7 +145,7 @@ def test_blend_covers_grown_garment_edge():
 
 
 def test_composite_crop_onto_respects_alpha():
-    from clothes_changer.utils.image import composite_crop_onto
+    from outfit_studio.utils.image import composite_crop_onto
 
     full = Image.new("RGB", (50, 50), color=(0, 0, 255))
     patch = Image.new("RGBA", (20, 20), color=(255, 0, 0, 0))
@@ -113,18 +155,12 @@ def test_composite_crop_onto_respects_alpha():
     assert out.getpixel((15, 15)) == (255, 0, 0)
 
 
-def test_inpaint_mask_from_clothes_expands_edges():
-    clothes = np.zeros((80, 80), dtype=np.uint8)
-    clothes[20:60, 20:60] = 1
-
-    expanded = inpaint_mask_from_clothes(clothes)
-
-    assert expanded.sum() > clothes.sum()
-    assert expanded[19, 40] == 1
-
-
 def test_generation_skips_instances_without_clothes(monkeypatch):
-    from clothes_changer.ml.pipeline import GenerationPipeline
+    from outfit_studio.config import get_settings
+    from outfit_studio.ml.pipeline import GenerationPipeline
+
+    monkeypatch.setenv("OUTFIT_STUDIO_PIPELINE_DEBUG", "false")
+    get_settings.cache_clear()
 
     source = Image.new("RGB", (200, 200), color=(20, 20, 20))
     person = np.zeros((200, 200), dtype=np.uint8)
@@ -155,16 +191,16 @@ def test_generation_skips_instances_without_clothes(monkeypatch):
             "bottom": 100,
         }
 
-    monkeypatch.setattr("clothes_changer.ml.pipeline.release_segmentation_gpu", lambda: None)
-    monkeypatch.setattr("clothes_changer.ml.pipeline.free_cuda_cache", lambda: None)
-    monkeypatch.setattr("clothes_changer.ml.pipeline.get_pose_estimator", lambda: DummyPose())
+    monkeypatch.setattr("outfit_studio.ml.pipeline.release_segmentation_gpu", lambda: None)
+    monkeypatch.setattr("outfit_studio.ml.pipeline.free_cuda_cache", lambda: None)
+    monkeypatch.setattr("outfit_studio.ml.pipeline.get_pose_estimator", lambda: DummyPose())
     monkeypatch.setattr(GenerationPipeline, "_process_single_mask", fake_process)
     monkeypatch.setattr(
-        "clothes_changer.ml.pipeline.get_inpaint_engine",
+        "outfit_studio.ml.pipeline.get_inpaint_engine",
         lambda: type("Engine", (), {"load": lambda *a, **k: None})(),
     )
 
-    result, _ = GenerationPipeline().generate(
+    result, _, _ = GenerationPipeline().generate(
         source,
         person_mask=person,
         clothes_mask=clothes,
@@ -178,7 +214,11 @@ def test_generation_skips_instances_without_clothes(monkeypatch):
 
 
 def test_generation_preserves_source_size(monkeypatch):
-    from clothes_changer.ml.pipeline import GenerationPipeline
+    from outfit_studio.config import get_settings
+    from outfit_studio.ml.pipeline import GenerationPipeline
+
+    monkeypatch.setenv("OUTFIT_STUDIO_PIPELINE_DEBUG", "false")
+    get_settings.cache_clear()
 
     source = Image.new("RGB", (1400, 900), color=(20, 20, 20))
     person = np.zeros((900, 1400), dtype=np.uint8)
@@ -202,20 +242,20 @@ def test_generation_preserves_source_size(monkeypatch):
             "bottom": 12,
         }
 
-    monkeypatch.setattr("clothes_changer.ml.pipeline.release_segmentation_gpu", lambda: None)
-    monkeypatch.setattr("clothes_changer.ml.pipeline.free_cuda_cache", lambda: None)
-    monkeypatch.setattr("clothes_changer.ml.pipeline.get_pose_estimator", lambda: DummyPose())
+    monkeypatch.setattr("outfit_studio.ml.pipeline.release_segmentation_gpu", lambda: None)
+    monkeypatch.setattr("outfit_studio.ml.pipeline.free_cuda_cache", lambda: None)
+    monkeypatch.setattr("outfit_studio.ml.pipeline.get_pose_estimator", lambda: DummyPose())
     monkeypatch.setattr(
-        "clothes_changer.ml.pipeline.prepare_instance_masks",
+        "outfit_studio.ml.pipeline.prepare_instance_masks",
         lambda person_mask, clothes_mask, bboxes: [(person_mask, clothes_mask)],
     )
     monkeypatch.setattr(GenerationPipeline, "_process_single_mask", fake_process)
     monkeypatch.setattr(
-        "clothes_changer.ml.pipeline.get_inpaint_engine",
+        "outfit_studio.ml.pipeline.get_inpaint_engine",
         lambda: type("Engine", (), {"load": lambda *a, **k: None})(),
     )
 
-    result, _ = GenerationPipeline().generate(
+    result, _, _ = GenerationPipeline().generate(
         source,
         person_mask=person,
         clothes_mask=clothes,

@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="360" viewBox="0 0 1180 360" role="img" aria-labelledby="title desc">
+  <title id="title">Outfit Studio pipeline overview</title>
+  <desc id="desc">A simple left to right diagram for upload, masks, mask editing, inpainting, and final output.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M1 1 L9 5 L1 9 Z" fill="#334155"/>
+    </marker>
+  </defs>
+  <style>
+    .bg { fill: #fbfaf7; }
+    .title { font: 700 28px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+    .sub { font: 400 15px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #667085; }
+    .card { fill: #ffffff; stroke: #d7dde7; stroke-width: 1.2; }
+    .name { font: 700 18px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #172033; }
+    .body { font: 400 13px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #5d6678; }
+    .num { font: 700 13px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #ffffff; }
+    .chip { font: 600 13px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #42526b; }
+    .arrow { stroke: #334155; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+    .line { stroke: #d7dde7; stroke-width: 1; }
+  </style>
+
+  <rect class="bg" width="1180" height="360"/>
+  <text class="title" x="54" y="56">Outfit Inpainting Pipeline</text>
+  <text class="sub" x="54" y="83">Upload a photo, isolate clothing, generate a replacement, and blend it back into the original frame.</text>
+
+  <path class="line" d="M70 250 H1094"/>
+
+  <g transform="translate(70 122)">
+    <rect class="card" width="176" height="118" rx="8"/>
+    <rect width="176" height="8" rx="8" fill="#70b7a8"/>
+    <circle cx="30" cy="34" r="15" fill="#2f766d"/>
+    <text class="num" x="26" y="39">1</text>
+    <text class="name" x="56" y="40">Upload</text>
+    <text class="body" x="24" y="72">Keep a clean RGB</text>
+    <text class="body" x="24" y="94">source image.</text>
+  </g>
+
+  <path class="arrow" d="M246 181 H272"/>
+
+  <g transform="translate(282 122)">
+    <rect class="card" width="176" height="118" rx="8"/>
+    <rect width="176" height="8" rx="8" fill="#83b7e8"/>
+    <circle cx="30" cy="34" r="15" fill="#366fa8"/>
+    <text class="num" x="26" y="39">2</text>
+    <text class="name" x="56" y="40">Segment</text>
+    <text class="body" x="24" y="72">Find person and</text>
+    <text class="body" x="24" y="94">clothing masks.</text>
+  </g>
+
+  <path class="arrow" d="M458 181 H484"/>
+
+  <g transform="translate(494 122)">
+    <rect class="card" width="176" height="118" rx="8"/>
+    <rect width="176" height="8" rx="8" fill="#b8a4e8"/>
+    <circle cx="30" cy="34" r="15" fill="#7257b5"/>
+    <text class="num" x="26" y="39">3</text>
+    <text class="name" x="56" y="40">Edit Mask</text>
+    <text class="body" x="24" y="72">Repaint the target</text>
+    <text class="body" x="24" y="94">region if needed.</text>
+  </g>
+
+  <path class="arrow" d="M670 181 H696"/>
+
+  <g transform="translate(706 122)">
+    <rect class="card" width="176" height="118" rx="8"/>
+    <rect width="176" height="8" rx="8" fill="#f0b06f"/>
+    <circle cx="30" cy="34" r="15" fill="#ad6427"/>
+    <text class="num" x="26" y="39">4</text>
+    <text class="name" x="56" y="40">Inpaint</text>
+    <text class="body" x="24" y="72">Run Diffusers on</text>
+    <text class="body" x="24" y="94">the clothing crop.</text>
+  </g>
+
+  <path class="arrow" d="M882 181 H908"/>
+
+  <g transform="translate(918 122)">
+    <rect class="card" width="176" height="118" rx="8"/>
+    <rect width="176" height="8" rx="8" fill="#e8899b"/>
+    <circle cx="30" cy="34" r="15" fill="#a9425c"/>
+    <text class="num" x="26" y="39">5</text>
+    <text class="name" x="56" y="40">Blend</text>
+    <text class="body" x="24" y="72">Feather the result</text>
+    <text class="body" x="24" y="94">into the photo.</text>
+  </g>
+
+  <rect x="300" y="290" width="246" height="34" rx="8" fill="#edf7f4" stroke="#b9ddd4"/>
+  <text class="chip" x="324" y="312">Optional OpenPose ControlNet</text>
+  <rect x="574" y="290" width="258" height="34" rx="8" fill="#f2effb" stroke="#d7cdf4"/>
+  <text class="chip" x="598" y="312">Debug dumps every major step</text>
+</svg>

@@ -1,6 +1,6 @@
 import pytest
 
-from clothes_changer.db.database import Database, DatabaseError
+from outfit_studio.db.database import Database, DatabaseError
 
 
 def test_register_and_authenticate(db: Database):

@@ -9,11 +9,11 @@ from PIL import Image
 pytestmark = pytest.mark.slow
 
 
-@patch("clothes_changer.ml.segmentor.load_seg_model")
-@patch("clothes_changer.ml.segmentor.SegformerImageProcessor")
-@patch("clothes_changer.ml.segmentor.AutoModelForSemanticSegmentation")
+@patch("outfit_studio.ml.segmentor.load_seg_model")
+@patch("outfit_studio.ml.segmentor.SegformerImageProcessor")
+@patch("outfit_studio.ml.segmentor.AutoModelForSemanticSegmentation")
 def test_clothes_segmentor_runs(mock_auto_model, mock_processor, mock_load_u2net):
-    from clothes_changer.ml.segmentor import ClothesSegmentor
+    from outfit_studio.ml.segmentor import ClothesSegmentor
 
     img = Image.new("RGB", (64, 64), color=(180, 140, 120))
     h, w = 64, 64
@@ -37,9 +37,9 @@ def test_clothes_segmentor_runs(mock_auto_model, mock_processor, mock_load_u2net
     mock_u2net = MagicMock()
     mock_load_u2net.return_value = mock_u2net
 
-    with patch("clothes_changer.ml.segmentor.generate_mask") as mock_u2_mask:
+    with patch("outfit_studio.ml.segmentor.generate_mask") as mock_u2_mask:
         mock_u2_mask.return_value = Image.new("P", (w, h))
-        _, person, clothes = ClothesSegmentor().segment(img)
+        person, clothes = ClothesSegmentor().segment(img)
 
     assert person.shape == (h, w)
     assert clothes.shape == (h, w)

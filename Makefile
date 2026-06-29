@@ -5,7 +5,10 @@ PYTHON := $(VENV)/bin/python
 UV := uv
 # PyTorch CUDA 13 (latest). ORT GPU from PyPI is CUDA 12 — see NVIDIA_CUDA12_LIBS below.
 TORCH_INDEX := https://download.pytorch.org/whl/cu130
-NVIDIA_CUDA12_LIBS := nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12
+# ORT GPU links against CUDA 12; PyTorch cu130 only ships cu13 libs (e.g. libcufft.so.12).
+NVIDIA_CUDA12_LIBS := \
+	nvidia-cublas-cu12 nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 \
+	nvidia-cufft-cu12 nvidia-curand-cu12 nvidia-cusparse-cu12 nvidia-cusolver-cu12
 
 install:
 	$(UV) venv --python 3.10 $(VENV)
@@ -21,16 +24,16 @@ install-fast: install
 	$(MAKE) download-models
 
 download-models:
-	$(PYTHON) -m clothes_changer.scripts.download_models
+	$(PYTHON) -m outfit_studio.scripts.download_models
 
 run:
-	$(PYTHON) -m clothes_changer.main
+	$(PYTHON) -m outfit_studio.main
 
 test:
 	$(PYTHON) -m pytest tests/ -v -m "not slow"
 
 lint:
-	$(VENV)/bin/ruff check clothes_changer tests
+	$(VENV)/bin/ruff check outfit_studio tests
 
 clean:
 	rm -rf $(VENV) .pytest_cache .ruff_cache dist *.egg-info
