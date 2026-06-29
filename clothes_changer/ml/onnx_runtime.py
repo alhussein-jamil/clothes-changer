@@ -24,26 +24,46 @@ _NVIDIA_LIB_SUBDIRS = (
     "nvrtc",
 )
 
+# On Windows, prepending pip cuDNN to PATH breaks PyTorch (bundled cuDNN mismatch).
+_WIN_ORT_LIB_SUBDIRS = tuple(n for n in _NVIDIA_LIB_SUBDIRS if n != "cudnn")
+
 
 def ensure_nvidia_cuda_libs() -> None:
     """Expose pip-installed NVIDIA CUDA 12 libraries to onnxruntime-gpu.
 
     PyTorch cu130 wheels bundle CUDA 13, while PyPI ``onnxruntime-gpu`` is built
     for CUDA 12. The companion ``nvidia-*-cu12`` packages supply the missing
-    ``libcublasLt.so.12`` etc. when they are on ``LD_LIBRARY_PATH``.
+    DLLs/SOs when they are on the library search path.
     """
+    subdirs = _WIN_ORT_LIB_SUBDIRS if os.name == "nt" else _NVIDIA_LIB_SUBDIRS
     dirs: list[str] = []
     for base in site.getsitepackages():
         nvidia_root = Path(base) / "nvidia"
         if not nvidia_root.is_dir():
             continue
-        for name in _NVIDIA_LIB_SUBDIRS:
+        for name in subdirs:
             lib_dir = nvidia_root / name / "lib"
             if lib_dir.is_dir():
                 dirs.append(str(lib_dir))
+            bin_dir = nvidia_root / name / "bin"
+            if bin_dir.is_dir():
+                dirs.append(str(bin_dir))
 
     if not dirs:
         logger.debug("No pip NVIDIA CUDA lib dirs found for ONNX Runtime")
+        return
+
+    if os.name == "nt":
+        existing = os.environ.get("PATH", "")
+        missing = [d for d in dirs if d.lower() not in existing.lower().split(";")]
+        if not missing:
+            logger.debug("NVIDIA CUDA libs already on PATH (%d dirs)", len(dirs))
+            return
+        os.environ["PATH"] = ";".join(missing + ([existing] if existing else []))
+        logger.info(
+            "Prepended %d NVIDIA CUDA lib dirs to PATH for ONNX Runtime",
+            len(missing),
+        )
         return
 
     existing = os.environ.get("LD_LIBRARY_PATH", "")

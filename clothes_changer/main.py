@@ -1,5 +1,12 @@
 """CLI entry point — launches Gradio UI."""
 
+import os
+import sys
+
+# Triton is not available on Windows; xformers still probes it on sm_80+ GPUs (e.g. RTX 30xx).
+if sys.platform == "win32":
+    os.environ.setdefault("XFORMERS_FORCE_DISABLE_TRITON", "1")
+
 import logging
 
 from clothes_changer.ml.gpu_memory import configure_pytorch_memory

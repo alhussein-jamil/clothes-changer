@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, TextIO
 
 from clothes_changer.config import get_settings
 
@@ -36,6 +37,40 @@ _MODULE_STYLES: dict[str, str] = {
 }
 
 _BANNER_COLOR = "\033[38;5;45m"  # teal
+
+_UNICODE_PROBE = "═╔║╚▶✓…—"
+
+
+def _console_encoding() -> str:
+    return getattr(sys.stdout, "encoding", None) or "utf-8"
+
+
+def _encoding_supports(text: str, encoding: str | None = None) -> bool:
+    enc = encoding or _console_encoding()
+    try:
+        text.encode(enc)
+        return True
+    except (UnicodeEncodeError, LookupError):
+        return False
+
+
+def use_unicode_decorations() -> bool:
+    """True when the console encoding can render box-drawing / symbol glyphs."""
+    if os.environ.get("CLOTHES_CHANGER_ASCII_LOG", "").lower() in ("1", "true", "yes"):
+        return False
+    return _encoding_supports(_UNICODE_PROBE)
+
+
+def _logging_stream() -> TextIO:
+    """Stdout that won't crash logging on Windows cp1252 and similar legacy encodings."""
+    stream = sys.stdout
+    enc = _console_encoding().lower().replace("-", "_")
+    if enc in ("utf_8", "utf8"):
+        return stream
+    buffer = getattr(stream, "buffer", None)
+    if buffer is not None:
+        return io.TextIOWrapper(buffer, encoding="utf-8", errors="replace", line_buffering=True)
+    return stream
 
 
 def supports_color() -> bool:
@@ -101,7 +136,7 @@ def setup_logging(*, level: int | None = None, force: bool = True) -> None:
     settings = get_settings()
     log_level = level if level is not None else settings.resolved_log_level()
 
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(_logging_stream())
     handler.setFormatter(ColorFormatter(use_color=supports_color()))
 
     root = logging.getLogger()
@@ -129,9 +164,10 @@ def log_banner(title: str, *lines: str) -> None:
     """Print a colorful startup banner."""
     logger = logging.getLogger("clothes_changer")
     width = max(len(title), *(len(line) for line in lines), 44)
-    border = "═" * (width + 4)
+    unicode_box = use_unicode_decorations()
 
-    if supports_color():
+    if supports_color() and unicode_box:
+        border = "═" * (width + 4)
         top = f"{_BANNER_COLOR}╔{border}╗{_RESET}"
         mid_title = (
             f"{_BANNER_COLOR}║{_RESET} {_BOLD}{title:<{width}}{_RESET} {_BANNER_COLOR}║{_RESET}"
@@ -142,10 +178,22 @@ def log_banner(title: str, *lines: str) -> None:
         ]
         bottom = f"{_BANNER_COLOR}╚{border}╝{_RESET}"
     else:
-        top = f"+{border}+"
-        mid_title = f"| {title:<{width}} |"
-        body = [f"| {line:<{width}} |" for line in lines]
-        bottom = f"+{border}+"
+        border = "-" * (width + 4)
+        if supports_color():
+            top = f"{_BANNER_COLOR}+{border}+{_RESET}"
+            mid_title = (
+                f"{_BANNER_COLOR}|{_RESET} {_BOLD}{title:<{width}}{_RESET} {_BANNER_COLOR}|{_RESET}"
+            )
+            body = [
+                f"{_BANNER_COLOR}|{_RESET} {_DIM}{line:<{width}}{_RESET} {_BANNER_COLOR}|{_RESET}"
+                for line in lines
+            ]
+            bottom = f"{_BANNER_COLOR}+{border}+{_RESET}"
+        else:
+            top = f"+{border}+"
+            mid_title = f"| {title:<{width}} |"
+            body = [f"| {line:<{width}} |" for line in lines]
+            bottom = f"+{border}+"
 
     for line in (top, mid_title, *body, bottom):
         logger.info(line)
@@ -162,10 +210,16 @@ def log_duration(
     """Log elapsed wall time for a block (e.g. model load, inference)."""
     extra = " ".join(f"{k}={v}" for k, v in fields.items())
     prefix = f"{label} ({extra})" if extra else label
-    logger.log(level, "▶ %s …", prefix)
+    if use_unicode_decorations():
+        logger.log(level, "▶ %s …", prefix)
+    else:
+        logger.log(level, ">> %s ...", prefix)
     start = time.perf_counter()
     try:
         yield
     finally:
         elapsed = time.perf_counter() - start
-        logger.log(level, "✓ %s done in %.2fs", prefix, elapsed)
+        if use_unicode_decorations():
+            logger.log(level, "✓ %s done in %.2fs", prefix, elapsed)
+        else:
+            logger.log(level, "OK %s done in %.2fs", prefix, elapsed)
