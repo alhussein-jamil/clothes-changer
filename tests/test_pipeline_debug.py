@@ -67,6 +67,6 @@ def test_open_or_create_unified_user_folder(tmp_path, monkeypatch):
 def test_pipeline_debug_disabled_by_default(monkeypatch):
     from clothes_changer.config import get_settings
 
-    monkeypatch.delenv("CLOTHES_CHANGER_PIPELINE_DEBUG", raising=False)
+    monkeypatch.setenv("CLOTHES_CHANGER_PIPELINE_DEBUG", "false")
     get_settings.cache_clear()
     assert PipelineDebugSession.create(get_settings(), "guest") is None

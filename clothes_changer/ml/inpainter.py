@@ -1,9 +1,10 @@
-"""Stable Diffusion ControlNet inpainting — matches original ClothLess model loading."""
+"""Stable Diffusion ControlNet inpainting for clothing edits."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 
 import requests
@@ -20,18 +21,31 @@ from PIL import Image
 from tqdm import tqdm
 
 from clothes_changer.config import Settings, get_settings
-from clothes_changer.content_config import get_checkpoint_urls, get_default_inpaint_model
-from clothes_changer.ml.checkpoints import is_sdxl_checkpoint
-from clothes_changer.ml.gpu_memory import free_cuda_cache
+from clothes_changer.constants import (
+    BYTES_PER_KIB,
+    BYTES_PER_MIB,
+    CLIP_MAX_TOKENS,
+    DOWNLOAD_SIZE_TOLERANCE,
+    HTTP_DOWNLOAD_CHUNK_BYTES,
+    HTTP_DOWNLOAD_TIMEOUT_S,
+    HTTP_USER_AGENT,
+    LATENT_ALIGN,
+    MIN_LATENT_SIDE,
+)
+from clothes_changer.content_config import (
+    get_checkpoint_urls,
+    get_default_inpaint_model,
+    get_model_aliases,
+)
+from clothes_changer.ml.checkpoints import (
+    checkpoint_architecture,
+    inpaint_checkpoint_valid,
+    is_hub_model_id,
+)
+from clothes_changer.ml.gpu_memory import free_cuda_cache, model_load_lock
 from clothes_changer.utils.logging import log_duration
 
 logger = logging.getLogger(__name__)
-
-MODEL_ALIASES: dict[str, list[str]] = {
-    "realisticVisionV60B1_v51HyperInpaintVAE.safetensors": [
-        "realisticVisionV60B1_v51HyperInpaintVAE_full.safetensors",
-    ],
-}
 
 StepProgressCallback = Callable[[int, int], None]
 
@@ -56,7 +70,9 @@ class InpaintEngine:
             return []
         found: list[str] = []
         for pattern in ("*.safetensors", "*.ckpt"):
-            found.extend(p.name for p in sorted(models_dir.glob(pattern)))
+            for path in sorted(models_dir.glob(pattern)):
+                if inpaint_checkpoint_valid(path):
+                    found.append(path.name)
         logger.debug("Discovered %d local checkpoint(s)", len(found))
         return found
 
@@ -64,14 +80,28 @@ class InpaintEngine:
         models: list[dict] = []
         local = self._discover_local_models()
         all_names = list(local)
+        default_id = get_default_inpaint_model()
+        if default_id not in all_names:
+            all_names.insert(0, default_id)
         for name in get_checkpoint_urls():
             if name not in all_names:
                 all_names.append(name)
 
         for name in all_names:
+            if is_hub_model_id(name):
+                models.append(
+                    {
+                        "id": name,
+                        "name": name.split("/")[-1],
+                        "source": "hub",
+                        "arch": "sd15",
+                    }
+                )
+                continue
             path = self._resolve_local_model(name)
-            arch = "sdxl" if path.is_file() and is_sdxl_checkpoint(name, path) else "sd15"
-            source = "local" if path.is_file() else "download"
+            valid = path.is_file() and inpaint_checkpoint_valid(path)
+            arch = checkpoint_architecture(name, path) if valid else "sd15"
+            source = "local" if valid else "download"
             models.append(
                 {
                     "id": name,
@@ -82,11 +112,14 @@ class InpaintEngine:
             )
 
         if not models:
+            preferred = self.settings.inpaint_model
             models.append(
                 {
-                    "id": self.settings.inpaint_model,
-                    "name": Path(self.settings.inpaint_model).stem,
-                    "source": "download",
+                    "id": preferred,
+                    "name": preferred.split("/")[-1]
+                    if is_hub_model_id(preferred)
+                    else Path(preferred).stem,
+                    "source": "hub" if is_hub_model_id(preferred) else "download",
                     "arch": "sd15",
                 }
             )
@@ -107,14 +140,20 @@ class InpaintEngine:
         return models[0]["id"]
 
     def model_architecture(self, model_id: str) -> str:
+        if is_hub_model_id(model_id):
+            return "sd15"
         path = self._resolve_local_model(model_id)
-        if path.is_file():
-            return "sdxl" if is_sdxl_checkpoint(model_id, path) else "sd15"
+        if path.is_file() and inpaint_checkpoint_valid(path):
+            return checkpoint_architecture(model_id, path)
         return "sd15"
 
     def download_model(self, model_path: Path) -> Path:
         if model_path.is_file():
-            return model_path
+            if inpaint_checkpoint_valid(model_path):
+                return model_path
+            logger.warning("Removing corrupt checkpoint %s", model_path.name)
+            model_path.unlink()
+
         url = get_checkpoint_urls().get(model_path.name)
         if not url:
             msg = f"Model {model_path.name} not found locally and has no download URL"
@@ -122,7 +161,12 @@ class InpaintEngine:
 
         model_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Downloading %s from %s", model_path.name, url)
-        response = requests.get(url, stream=True, timeout=60)
+        response = requests.get(
+            url,
+            stream=True,
+            timeout=HTTP_DOWNLOAD_TIMEOUT_S,
+            headers={"User-Agent": HTTP_USER_AGENT},
+        )
         response.raise_for_status()
         total = int(response.headers.get("content-length", 0))
         with (
@@ -132,35 +176,47 @@ class InpaintEngine:
                 total=total,
                 unit="iB",
                 unit_scale=True,
-                unit_divisor=1024,
+                unit_divisor=BYTES_PER_KIB,
             ) as bar,
         ):
-            for chunk in response.iter_content(8192):
+            for chunk in response.iter_content(HTTP_DOWNLOAD_CHUNK_BYTES):
                 size = f.write(chunk)
                 bar.update(size)
+
+        actual = model_path.stat().st_size
+        if total and actual < total * DOWNLOAD_SIZE_TOLERANCE:
+            model_path.unlink()
+            msg = (
+                f"Download of {model_path.name} incomplete "
+                f"({actual / BYTES_PER_MIB:.1f} MB of {total / BYTES_PER_MIB:.1f} MB)"
+            )
+            raise RuntimeError(msg)
+        if not inpaint_checkpoint_valid(model_path):
+            model_path.unlink()
+            msg = f"Downloaded {model_path.name} is not a valid checkpoint"
+            raise RuntimeError(msg)
         return model_path
 
     def _resolve_local_model(self, model_id: str) -> Path:
         primary = self.settings.resolved_models_dir / model_id
-        if primary.is_file():
+        if primary.is_file() and inpaint_checkpoint_valid(primary):
             return primary
-        for alias in MODEL_ALIASES.get(model_id, []):
+        for alias in get_model_aliases().get(model_id, []):
             alias_path = self.settings.resolved_models_dir / alias
-            if alias_path.is_file():
+            if alias_path.is_file() and inpaint_checkpoint_valid(alias_path):
                 return alias_path
         return primary
 
     def _resolve_model_path(self, model_id: str) -> str:
+        if is_hub_model_id(model_id):
+            return model_id
         local = self._resolve_local_model(model_id)
-        if local.is_file():
+        if local.is_file() and inpaint_checkpoint_valid(local):
             return str(local)
         self.download_model(local)
         return str(local)
 
     def unload(self) -> None:
-        self._unload()
-
-    def _unload(self) -> None:
         if self._pipe is not None:
             logger.info("Unloading inpaint pipeline (model=%s)", self._current_model)
             del self._pipe
@@ -186,7 +242,7 @@ class InpaintEngine:
             logger.debug("Reusing loaded inpaint pipeline (%s)", model_id)
             return
 
-        self._unload()
+        self.unload()
         model_path = self._resolve_model_path(model_id)
         logger.info(
             "Loading inpaint model: %s arch=%s controlnet=%s",
@@ -195,59 +251,60 @@ class InpaintEngine:
             use_controlnet,
         )
 
-        with log_duration(logger, "load inpaint pipeline", model=model_id, arch=arch):
-            disable_progress_bars()
-            try:
-                if arch == "sdxl":
-                    if model_path.endswith(".safetensors"):
-                        self._pipe = StableDiffusionXLInpaintPipeline.from_single_file(
+        with model_load_lock():
+            with log_duration(logger, "load inpaint pipeline", model=model_id, arch=arch):
+                disable_progress_bars()
+                try:
+                    if arch == "sdxl":
+                        if model_path.endswith(".safetensors"):
+                            self._pipe = StableDiffusionXLInpaintPipeline.from_single_file(
+                                model_path,
+                                torch_dtype=self.dtype,
+                            )
+                        else:
+                            self._pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
+                                model_path,
+                                torch_dtype=self.dtype,
+                            )
+                    elif use_controlnet and self.device.type == "cuda":
+                        controlnet = ControlNetModel.from_pretrained(
+                            self.settings.controlnet_model,
+                            torch_dtype=self.dtype,
+                        )
+                        self._pipe = StableDiffusionControlNetInpaintPipeline.from_single_file(
+                            model_path,
+                            controlnet=controlnet,
+                            torch_dtype=self.dtype,
+                            use_safetensors=model_path.endswith(".safetensors"),
+                            safety_checker=None,
+                        )
+                    elif model_path.endswith((".safetensors", ".ckpt")):
+                        self._pipe = StableDiffusionInpaintPipeline.from_single_file(
                             model_path,
                             torch_dtype=self.dtype,
+                            use_safetensors=model_path.endswith(".safetensors"),
+                            safety_checker=None,
                         )
                     else:
-                        self._pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
+                        self._pipe = StableDiffusionInpaintPipeline.from_pretrained(
                             model_path,
                             torch_dtype=self.dtype,
+                            safety_checker=None,
                         )
-                elif use_controlnet and self.device.type == "cuda":
-                    controlnet = ControlNetModel.from_pretrained(
-                        self.settings.controlnet_model,
-                        torch_dtype=self.dtype,
-                    )
-                    self._pipe = StableDiffusionControlNetInpaintPipeline.from_single_file(
-                        model_path,
-                        controlnet=controlnet,
-                        torch_dtype=self.dtype,
-                        use_safetensors=model_path.endswith(".safetensors"),
-                        safety_checker=None,
-                    )
-                elif model_path.endswith((".safetensors", ".ckpt")):
-                    self._pipe = StableDiffusionInpaintPipeline.from_single_file(
-                        model_path,
-                        torch_dtype=self.dtype,
-                        use_safetensors=model_path.endswith(".safetensors"),
-                        safety_checker=None,
-                    )
-                else:
-                    self._pipe = StableDiffusionInpaintPipeline.from_pretrained(
-                        model_path,
-                        torch_dtype=self.dtype,
-                        safety_checker=None,
-                    )
-            finally:
-                enable_progress_bars()
+                finally:
+                    enable_progress_bars()
 
-            assert self._pipe is not None
-            if hasattr(self._pipe, "safety_checker"):
-                self._pipe.safety_checker = None
-            if hasattr(self._pipe, "set_progress_bar_config"):
-                self._pipe.set_progress_bar_config(disable=True)
-            self._pipe.scheduler = DPMSolverMultistepScheduler(
-                use_karras_sigmas=True,
-                algorithm_type="sde-dpmsolver++",
-            )
-            self._pipe = self._pipe.to(self.device)
-            self._enable_fast_attention(self._pipe)
+                assert self._pipe is not None
+                if hasattr(self._pipe, "safety_checker"):
+                    self._pipe.safety_checker = None
+                if hasattr(self._pipe, "set_progress_bar_config"):
+                    self._pipe.set_progress_bar_config(disable=True)
+                self._pipe.scheduler = DPMSolverMultistepScheduler(
+                    use_karras_sigmas=True,
+                    algorithm_type="sde-dpmsolver++",
+                )
+                self._pipe = self._pipe.to(self.device)
+                self._enable_fast_attention(self._pipe)
 
         self._current_model = model_id
         self._use_controlnet = use_controlnet
@@ -259,7 +316,7 @@ class InpaintEngine:
         if self._pipe is None or not hasattr(self._pipe, "tokenizer"):
             return prompt, negative_prompt
         tokenizer = self._pipe.tokenizer
-        max_len = getattr(tokenizer, "model_max_length", 77)
+        max_len = getattr(tokenizer, "model_max_length", CLIP_MAX_TOKENS)
 
         def _truncate(text: str) -> str:
             ids = tokenizer.encode(text, truncation=True, max_length=max_len)
@@ -312,8 +369,8 @@ class InpaintEngine:
         prompt, negative_prompt = self._truncate_prompts(prompt, negative_prompt)
 
         orig_w, orig_h = image.size
-        infer_w = width or max(64, (orig_w // 8) * 8)
-        infer_h = height or max(64, (orig_h // 8) * 8)
+        infer_w = width or max(MIN_LATENT_SIDE, (orig_w // LATENT_ALIGN) * LATENT_ALIGN)
+        infer_h = height or max(MIN_LATENT_SIDE, (orig_h // LATENT_ALIGN) * LATENT_ALIGN)
         logger.info(
             "Inpaint %dx%d → %dx%d | steps=%d cfg=%.1f controlnet=%s",
             orig_w,
@@ -366,12 +423,6 @@ class InpaintEngine:
         return result
 
 
-_engine: InpaintEngine | None = None
-
-
+@lru_cache
 def get_inpaint_engine() -> InpaintEngine:
-    global _engine
-    if _engine is None:
-        logger.debug("Creating InpaintEngine singleton")
-        _engine = InpaintEngine()
-    return _engine
+    return InpaintEngine()

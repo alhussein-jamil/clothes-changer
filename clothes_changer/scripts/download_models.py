@@ -9,17 +9,11 @@ from pathlib import Path
 from PIL import Image
 
 from clothes_changer.config import get_settings
+from clothes_changer.ml.checkpoints import cloth_segm_checkpoint_valid, inpaint_checkpoint_valid
 
 logger = logging.getLogger(__name__)
 
-# U2NET cloth segmentation (levindabhi / wildoctopus huggingface-cloth-segmentation)
 CLOTH_SEGM_GDRIVE_ID = "11xTBALOeUkyuaK3l60CpkYHLTmv7k3dY"
-# Real cloth_segm.pth is ~169 MB; reject truncated or placeholder files.
-_CLOTH_SEGM_MIN_BYTES = 50_000_000
-
-
-def cloth_segm_checkpoint_valid(path: Path) -> bool:
-    return path.is_file() and path.stat().st_size >= _CLOTH_SEGM_MIN_BYTES
 
 
 def download_cloth_segm(models_dir: Path | None = None) -> Path:
@@ -31,12 +25,7 @@ def download_cloth_segm(models_dir: Path | None = None) -> Path:
         return dest
 
     if dest.is_file():
-        logger.warning(
-            "Removing invalid %s (%.1f MB — expected ≥%.0f MB)",
-            dest.name,
-            dest.stat().st_size / 1_048_576,
-            _CLOTH_SEGM_MIN_BYTES / 1_048_576,
-        )
+        logger.warning("Removing corrupt %s", dest.name)
         dest.unlink()
 
     try:
@@ -49,15 +38,18 @@ def download_cloth_segm(models_dir: Path | None = None) -> Path:
     url = f"https://drive.google.com/uc?id={CLOTH_SEGM_GDRIVE_ID}"
     logger.info("Downloading U2NET cloth_segm.pth from Google Drive...")
     gdown.download(url, str(dest), quiet=False)
-    if not dest.is_file():
-        msg = f"Failed to download {dest.name}"
+    if not cloth_segm_checkpoint_valid(dest):
+        if dest.is_file():
+            dest.unlink()
+        msg = f"Failed to download a valid {dest.name}"
         raise RuntimeError(msg)
     logger.info("Downloaded %s (%.1f MB)", dest, dest.stat().st_size / 1_048_576)
     return dest
 
 
-def download_default_inpaint_checkpoint(models_dir: Path | None = None) -> Path:
-    """Download the default SD1.5 inpaint checkpoint for outfit editing."""
+def download_default_inpaint_checkpoint(models_dir: Path | None = None) -> Path | None:
+    """Download or cache the configured default inpaint model."""
+    from clothes_changer.ml.checkpoints import is_hub_model_id
     from clothes_changer.ml.inpainter import InpaintEngine
 
     settings = get_settings()
@@ -65,8 +57,12 @@ def download_default_inpaint_checkpoint(models_dir: Path | None = None) -> Path:
     models_dir.mkdir(parents=True, exist_ok=True)
     engine = InpaintEngine()
     model_id = engine.default_model_id()
+    if is_hub_model_id(model_id):
+        logger.info("Caching Hugging Face inpaint model: %s", model_id)
+        engine.load(model_id)
+        return None
     path = models_dir / model_id
-    if path.is_file() and path.stat().st_size > 0:
+    if inpaint_checkpoint_valid(path):
         logger.info("Default inpaint model present: %s", path)
         return path
     logger.info("Downloading default inpaint model: %s", model_id)
@@ -93,8 +89,6 @@ def warmup_segformer() -> None:
     """Pre-download HuggingFace SegFormer weights."""
     logger.info("Warming up SegFormer weights...")
     from transformers import AutoModelForSemanticSegmentation, SegformerImageProcessor
-
-    from clothes_changer.config import get_settings
 
     model_id = get_settings().segformer_model
     SegformerImageProcessor.from_pretrained(model_id)

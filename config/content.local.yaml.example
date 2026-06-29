@@ -1,14 +1,43 @@
-# Copy to content.local.yaml to override prompts, branding, or model defaults.
-# content.local.yaml is gitignored — safe for local/custom wording.
+# Copy to content.local.yaml for local overrides (gitignored).
 #
 #   cp config/content.local.yaml.example config/content.local.yaml
 #
+# Local YAML merges on top of config/content.default.yaml.
+
 # app:
-#   name: My Local App Name
-#
+#   name: My Studio
+#   tagline: Custom clothing editor
+
 # prompts:
-#   default: "your custom positive prompt"
-#   negative: "your custom negative prompt"
-#
-# models:
-#   default_inpaint: realisticVisionV60B1_v51HyperInpaintVAE.safetensors
+#   default: "high quality photo, detailed outfit, natural lighting"
+#   negative: "worst quality, low quality, blurry, watermark"
+
+models:
+  # SD1.5 inpaint checkpoints — downloaded into models/ on first use.
+  default_inpaint: cyberrealistic_v80Inpainting.safetensors
+
+  aliases:
+    realisticVisionV60B1_v51HyperInpaintVAE.safetensors:
+      - realisticVisionV60B1_v51HyperInpaintVAE_full.safetensors
+
+  download_urls:
+    cyberrealistic_v80Inpainting.safetensors: >-
+      https://civitai.com/api/download/models/1464918
+    realisticVisionV60B1_v51HyperInpaintVAE.safetensors: >-
+      https://civitai.com/api/download/models/501286
+    realisticVisionV60B1_v51HyperInpaintVAE_full.safetensors: >-
+      https://civitai.com/api/download/models/501286
+    lazymixRealAmateur_v40Inpainting.safetensors: >-
+      https://civitai.com/api/download/models/302254
+    clarity_V3-inpainting.safetensors: >-
+      https://civitai.com/api/download/models/145163
+
+# generation:
+#   use_controlnet: true
+#   steps: 50
+#   guidance_scale: 6.5
+
+# pose:
+#   detection_threshold: 0.5
+#   keypoint_threshold: 0.3
+#   mode: balanced

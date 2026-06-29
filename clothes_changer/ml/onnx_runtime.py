@@ -30,7 +30,8 @@ def ensure_nvidia_cuda_libs() -> None:
 
     PyTorch cu130 wheels bundle CUDA 13, while PyPI ``onnxruntime-gpu`` is built
     for CUDA 12. The companion ``nvidia-*-cu12`` packages supply the missing
-    ``libcublasLt.so.12`` etc. when they are on ``LD_LIBRARY_PATH``.
+    ``libcublasLt.so.12``, ``libcufft.so.11``, etc. when they are on
+    ``LD_LIBRARY_PATH``. See ``NVIDIA_CUDA12_LIBS`` in the Makefile.
     """
     dirs: list[str] = []
     for base in site.getsitepackages():

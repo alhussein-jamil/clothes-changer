@@ -11,6 +11,7 @@ import numpy as np
 from gradio_client import handle_file
 from PIL import Image
 
+from clothes_changer.constants import UI, MaskEditor
 from clothes_changer.ui.constants import CLOTHES_COLOR, EDITOR_CANVAS_SIZE, PERSON_COLOR
 from clothes_changer.utils.image import align_masks, mask_overlay
 
@@ -25,10 +26,12 @@ def _describe_value(value: Any) -> str:
     if isinstance(value, np.ndarray):
         return f"ndarray(shape={value.shape}, dtype={value.dtype})"
     if isinstance(value, str):
-        return f"str({value[:120]!r}{'...' if len(value) > 120 else ''})"
+        preview_len = UI.LOG_PREVIEW_LEN
+        suffix = "..." if len(value) > preview_len else ""
+        return f"str({value[:preview_len]!r}{suffix})"
     if isinstance(value, dict):
         keys = list(value.keys())
-        preview = {k: _describe_value(value[k]) for k in keys[:6]}
+        preview = {k: _describe_value(value[k]) for k in keys[: UI.DESCRIBE_DICT_KEYS_PREVIEW]}
         return f"dict(keys={keys}, preview={preview})"
     if isinstance(value, list | tuple):
         return f"{type(value).__name__}(len={len(value)})"
@@ -92,11 +95,11 @@ def _masks_from_layer(layer_img: Image.Image) -> tuple[np.ndarray, np.ndarray]:
     """Read person/clothes masks from an ImageEditor layer (handles Gradio round-trips)."""
     arr = np.array(layer_img.convert("RGBA"))
     alpha = arr[..., 3]
-    visible = alpha > 8
+    visible = alpha > MaskEditor.ALPHA_VISIBLE_MIN
     red = arr[..., 0].astype(np.int16)
     green = arr[..., 1].astype(np.int16)
-    person = (visible & (red > 20) & (red >= green)).astype(np.uint8)
-    clothes = (visible & (green > 20) & (green > red)).astype(np.uint8)
+    person = (visible & (red > MaskEditor.CHANNEL_MIN) & (red >= green)).astype(np.uint8)
+    clothes = (visible & (green > MaskEditor.CHANNEL_MIN) & (green > red)).astype(np.uint8)
     return person, clothes
 
 
@@ -115,10 +118,11 @@ def _masks_from_composite(
     bg_arr = np.array(bg, dtype=np.int16)
     comp_arr = np.array(comp_rgb, dtype=np.int16)
     diff = comp_arr - bg_arr
-    changed = np.abs(diff).max(axis=2) > 6
+    changed = np.abs(diff).max(axis=2) > MaskEditor.COMPOSITE_DIFF_MIN
 
-    clothes = (((diff[:, :, 1] - diff[:, :, 0]) > 8) & changed).astype(np.uint8)
-    person = (((diff[:, :, 0] - diff[:, :, 1]) > 8) & changed).astype(np.uint8)
+    bias = MaskEditor.COMPOSITE_CHANNEL_BIAS_MIN
+    clothes = (((diff[:, :, 1] - diff[:, :, 0]) > bias) & changed).astype(np.uint8)
+    person = (((diff[:, :, 0] - diff[:, :, 1]) > bias) & changed).astype(np.uint8)
 
     overlap = (person > 0) & (clothes > 0)
     person[overlap & (diff[:, :, 1] >= diff[:, :, 0])] = 0
@@ -160,15 +164,8 @@ def background_key_from_path(path: str | Path) -> str:
 
 def background_key_from_image(image: Image.Image) -> str:
     """Content fingerprint for deduplicating auto-segment on ImageEditor upload loops."""
-    small = image.convert("RGB").resize((64, 64), Image.Resampling.BILINEAR)
+    small = image.convert("RGB").resize(MaskEditor.FINGERPRINT_SIZE, Image.Resampling.BILINEAR)
     return f"rgb:{hash(small.tobytes())}"
-
-
-def editor_background_raw(editor: dict | None) -> Any:
-    """Return the background payload from an ImageEditor value (not the composite overlay)."""
-    if not editor or not isinstance(editor, dict):
-        return None
-    return editor.get("background")
 
 
 def load_editor_clean_image(editor: dict | None) -> Image.Image | None:
@@ -196,34 +193,6 @@ def masks_have_pixels(
         and clothes is not None
         and (int(person.sum()) > 0 or int(clothes.sum()) > 0)
     )
-
-
-def stable_source_key(raw: Any) -> str | None:
-    """Stable segment key for editor payloads (content hash, not ephemeral Gradio paths)."""
-    if raw is None:
-        return None
-    if isinstance(raw, Image.Image):
-        return background_key_from_image(raw.convert("RGB"))
-    path = _resolve_file_path(raw) if isinstance(raw, str | dict) else None
-    if path and Path(path).is_file():
-        if "gradio" in path or path.startswith("/tmp"):
-            with Image.open(path) as img:
-                return background_key_from_image(img.convert("RGB"))
-        return f"path:{Path(path).resolve()}"
-    bg = _load_background_image(raw) if isinstance(raw, str | dict | Image.Image) else None
-    if bg is not None:
-        return background_key_from_image(bg.convert("RGB"))
-    return None
-
-
-def editor_background_key(editor: dict | None) -> str | None:
-    """Stable id for the current editor background (avoids re-segment loops)."""
-    if not editor or not isinstance(editor, dict):
-        return None
-    bg_raw = editor.get("background")
-    if bg_raw is None:
-        bg_raw = editor.get("composite")
-    return stable_source_key(bg_raw)
 
 
 def letterbox_to_editor_canvas(

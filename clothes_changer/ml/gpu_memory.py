@@ -5,17 +5,32 @@ from __future__ import annotations
 import gc
 import logging
 import os
+import threading
+from contextlib import contextmanager
 
 import torch
 
+from clothes_changer.constants import (
+    BYTES_PER_GB,
+    BYTES_PER_MIB,
+    VRAM_INPAINT_CONTROLNET_GB,
+    VRAM_INPAINT_PLAIN_GB,
+    VRAM_INPAINT_SDXL_GB,
+    VRAM_SEGMENTATION_PEAK_GB,
+)
 from clothes_changer.ml.checkpoints import is_sdxl_model_name
 
 logger = logging.getLogger(__name__)
 
 _CONFIGURED = False
+_MODEL_LOAD_LOCK = threading.Lock()
 
-# Peak VRAM while segmentation models are loaded (SegFormer-b2 + U2NET).
-_SEGMENTATION_PEAK_GB = 2.0
+
+@contextmanager
+def model_load_lock():
+    """Serialize heavy checkpoint loads (diffusers + U2NET share PyTorch meta-device state)."""
+    with _MODEL_LOAD_LOCK:
+        yield
 
 
 def configure_pytorch_memory() -> None:
@@ -31,9 +46,9 @@ def configure_pytorch_memory() -> None:
 def free_cuda_cache() -> None:
     gc.collect()
     if torch.cuda.is_available():
-        before = torch.cuda.memory_allocated() / (1024**2)
+        before = torch.cuda.memory_allocated() / BYTES_PER_MIB
         torch.cuda.empty_cache()
-        after = torch.cuda.memory_allocated() / (1024**2)
+        after = torch.cuda.memory_allocated() / BYTES_PER_MIB
         logger.debug("CUDA cache cleared (%.0f → %.0f MiB allocated)", before, after)
 
 
@@ -42,8 +57,7 @@ def gpu_memory_gb() -> tuple[float, float]:
     if not torch.cuda.is_available():
         return 0.0, 0.0
     free_bytes, total_bytes = torch.cuda.mem_get_info()
-    gb = 1024**3
-    return free_bytes / gb, total_bytes / gb
+    return free_bytes / BYTES_PER_GB, total_bytes / BYTES_PER_GB
 
 
 def gpu_total_gb() -> float:
@@ -60,8 +74,8 @@ def _inpaint_vram_budget_gb() -> float:
 
     settings = get_settings()
     if is_sdxl_model_name(settings.inpaint_model):
-        return 10.0
-    return 6.0 if settings.use_controlnet else 4.5
+        return VRAM_INPAINT_SDXL_GB
+    return VRAM_INPAINT_CONTROLNET_GB if settings.use_controlnet else VRAM_INPAINT_PLAIN_GB
 
 
 def prefer_cpu_for_segmentation() -> bool:
@@ -77,7 +91,7 @@ def prefer_cpu_for_segmentation() -> bool:
 
     free_gb, total_gb = gpu_memory_gb()
     inpaint_gb = _inpaint_vram_budget_gb()
-    combined_gb = _SEGMENTATION_PEAK_GB + inpaint_gb
+    combined_gb = VRAM_SEGMENTATION_PEAK_GB + inpaint_gb
     use_cpu = total_gb < combined_gb
 
     logger.debug(

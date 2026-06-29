@@ -1,4 +1,4 @@
-"""End-to-end generation — original ClothLess pipeline (SegFormer + ControlNet)."""
+"""End-to-end clothing inpainting (segmentation, pose, diffusion, blend)."""
 
 from __future__ import annotations
 
@@ -6,18 +6,26 @@ import logging
 import random
 from collections.abc import Callable
 from datetime import datetime
+from functools import lru_cache
 
 import numpy as np
 import torch
 from PIL import Image
 
 from clothes_changer.config import get_settings
+from clothes_changer.constants import (
+    LATENT_ALIGN,
+    MASK_ON,
+    SEED_MAX,
+    GenerateProgress,
+    PersonProgress,
+)
 from clothes_changer.content_config import get_default_negative_prompt, get_default_prompt
 from clothes_changer.ml.gpu_memory import free_cuda_cache, release_segmentation_gpu
 from clothes_changer.ml.inpainter import get_inpaint_engine
 from clothes_changer.ml.pipeline_debug import PipelineDebugSession
 from clothes_changer.ml.pose import get_pose_estimator
-from clothes_changer.ml.segmentor import get_segmentor
+from clothes_changer.ml.segmentation import run_segmentation
 from clothes_changer.utils.image import (
     align_masks,
     apply_reflection_padding,
@@ -25,11 +33,8 @@ from clothes_changer.utils.image import (
     composite_crop_onto,
     get_bounding_box,
     get_crop_info,
-    mask_overlay,
-    pil_to_base64,
     prepare_instance_masks,
     remove_reflection_padding,
-    resize_max,
 )
 from clothes_changer.utils.logging import log_duration
 
@@ -40,13 +45,6 @@ ProgressCallback = Callable[[float, str], None]
 
 def _noop_progress(_fraction: float, _desc: str) -> None:
     pass
-
-
-# Overall generate() progress bar sub-ranges (fractions of 0–1).
-_PROGRESS_PREP_END = 0.18
-_PROGRESS_PERSON_START = 0.2
-_PROGRESS_PERSON_SPAN = 0.7
-_PROGRESS_SAVE = 0.95
 
 
 def _scoped_progress(
@@ -68,24 +66,6 @@ class GenerationPipeline:
 
     def __init__(self) -> None:
         self.settings = get_settings()
-
-    def segment_for_ui(self, image: Image.Image) -> dict:
-        image = resize_max(image, self.settings.max_image_size)
-        logger.info("UI segmentation on %dx%d image", image.width, image.height)
-        with log_duration(logger, "segment_for_ui"):
-            _, person, clothes = get_segmentor().segment(image)
-        overlay = mask_overlay(image, person, clothes)
-        logger.debug(
-            "segment_for_ui masks — person=%d px clothes=%d px",
-            int(person.sum()),
-            int(clothes.sum()),
-        )
-        return {
-            "overlay_base64": pil_to_base64(overlay),
-            "person_mask_base64": pil_to_base64(Image.fromarray(person * 255)),
-            "clothes_mask_base64": pil_to_base64(Image.fromarray(clothes * 255)),
-            "size": image.size,
-        }
 
     def _process_single_mask(
         self,
@@ -109,12 +89,12 @@ class GenerationPipeline:
         prefix = f"Person {person_index}/{person_total}"
         sub = _scoped_progress(report, progress_span, prefix)
 
-        sub(0.0, "Preparing region")
-        clothes_alpha = Image.fromarray((clothes_mask * 255).astype(np.uint8))
-        person_alpha = Image.fromarray((person_mask * 255).astype(np.uint8))
+        sub(PersonProgress.PREP, "Preparing region")
+        clothes_alpha = Image.fromarray((clothes_mask * MASK_ON).astype(np.uint8))
+        person_alpha = Image.fromarray((person_mask * MASK_ON).astype(np.uint8))
 
-        person_binary = person_alpha.point(lambda p: 255 if p > 0 else 0)
-        clothes_binary = clothes_alpha.point(lambda p: 255 if p > 0 else 0)
+        person_binary = person_alpha.point(lambda p: MASK_ON if p > 0 else 0)
+        clothes_binary = clothes_alpha.point(lambda p: MASK_ON if p > 0 else 0)
         combined_mask = Image.new("L", full_image.size, 0)
         combined_mask.paste(person_binary, (0, 0))
         combined_mask.paste(clothes_binary, (0, 0), clothes_binary)
@@ -151,27 +131,29 @@ class GenerationPipeline:
             padding_info = None
 
         cnet_image = padded_image.copy()
-        binary_mask = padded_mask.point(lambda p: 255 if p > 0 else 0)
+        binary_mask = padded_mask.point(lambda p: MASK_ON if p > 0 else 0)
         cnet_image.paste(0, (0, 0), binary_mask)
         cnet_image = cnet_image.convert("RGB")
 
         pose_est = get_pose_estimator()
         control_image = None
         if use_controlnet:
-            sub(0.06, "Detecting pose")
+            sub(PersonProgress.POSE_DETECT, "Detecting pose")
             bboxes = pose_est.get_bboxes(cnet_image)
             logger.debug("Pose bboxes for crop: %d", len(bboxes))
-            sub(0.09, "Building ControlNet guide")
+            sub(PersonProgress.POSE_GUIDE, "Building ControlNet guide")
             control_image = pose_est.estimate(cnet_image, bboxes=bboxes)
         else:
-            sub(0.06, "Preparing inpaint area")
+            sub(PersonProgress.PREP_AREA, "Preparing inpaint area")
 
         top, left, bottom, right = get_bounding_box(np.array(binary_mask) > 0)
         engine = get_inpaint_engine()
-        sub(0.11, "Loading model")
+        sub(PersonProgress.LOAD_MODEL, "Loading model")
         engine.load(model, use_controlnet)
         infer_size = max(
-            min(max(right - left, bottom - top), self.settings.inference_size) // 8 * 8,
+            min(max(right - left, bottom - top), self.settings.inference_size)
+            // LATENT_ALIGN
+            * LATENT_ALIGN,
             self.settings.min_inference_size,
         )
         resolved_model = model or get_inpaint_engine().default_model_id()
@@ -209,11 +191,12 @@ class GenerationPipeline:
             )
 
         def on_diffusion_step(step: int, total: int) -> None:
-            # Reserve 12–88% of this person's slice for diffusion steps.
-            local = 0.12 + 0.76 * (step + 1) / max(total, 1)
+            local = PersonProgress.DIFFUSION_START + PersonProgress.DIFFUSION_SPAN * (
+                step + 1
+            ) / max(total, 1)
             sub(local, f"Diffusion step {step + 1}/{total}")
 
-        sub(0.12, f"Starting diffusion ({num_inference_steps} steps)")
+        sub(PersonProgress.DIFFUSION_START, f"Starting diffusion ({num_inference_steps} steps)")
         with log_duration(logger, "diffusion inpaint", steps=num_inference_steps):
             output_image = engine.inpaint(
                 cnet_image,
@@ -236,7 +219,7 @@ class GenerationPipeline:
             prefix = f"person_{person_index:02d}"
             debug.save_image(f"{prefix}/05_diffusion_output.png", output_image)
 
-        sub(0.90, "Blending result")
+        sub(PersonProgress.BLEND, "Blending result")
         reflection_stripped = remove_reflection_padding(output_image, padding_info)
         logger.debug("Reflection padding removed")
         result_image = blend_images_with_enhancements(
@@ -269,7 +252,7 @@ class GenerationPipeline:
         debug_session_dir: str | None = None,
     ) -> tuple[Image.Image, str]:
         report = progress or _noop_progress
-        report(0.05, "Preparing image and masks")
+        report(GenerateProgress.PREP_START, "Preparing image and masks")
         logger.info(
             "Generate started (user=%s, model=%s, steps=%s, cfg=%s, controlnet=%s)",
             username,
@@ -287,13 +270,13 @@ class GenerationPipeline:
 
         if person_mask is None or clothes_mask is None:
             logger.info("No editor masks — running full segmentation")
-            report(0.1, "Running clothes segmentation")
-            session, _ = PipelineDebugSession.open_or_create(
-                self.settings, username, debug_session_dir
+            report(GenerateProgress.SEGMENT, "Running clothes segmentation")
+            person_mask, clothes_mask, _ = run_segmentation(
+                image,
+                settings=self.settings,
+                username=username,
+                debug_session_dir=debug_session_dir,
             )
-            seg_debug = session.subfolder("segmentation") if session else None
-            with log_duration(logger, "auto-segment"):
-                _, person_mask, clothes_mask = get_segmentor().segment(image, debug=seg_debug)
 
         person_mask, clothes_mask = align_masks(person_mask, clothes_mask, h, w)
 
@@ -304,7 +287,7 @@ class GenerationPipeline:
         use_controlnet = (
             use_controlnet if use_controlnet is not None else self.settings.use_controlnet
         )
-        seed = seed if seed is not None else random.randint(0, 999_999)
+        seed = seed if seed is not None else random.randint(0, SEED_MAX)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info("Using seed %d on %s", seed, device)
@@ -331,7 +314,7 @@ class GenerationPipeline:
             )
 
         pose_est = get_pose_estimator()
-        report(0.15, "Detecting people")
+        report(GenerateProgress.DETECT_PEOPLE, "Detecting people")
         bboxes = pose_est.get_bboxes(image)
         instances = prepare_instance_masks(person_mask, clothes_mask, bboxes)
         if debug is not None:
@@ -348,7 +331,7 @@ class GenerationPipeline:
         if not active:
             active = instances
 
-        report(_PROGRESS_PREP_END, "Loading inpainting model")
+        report(GenerateProgress.PREP_END, "Loading inpainting model")
         get_inpaint_engine().load(model, use_controlnet)
         if debug is not None:
             engine = get_inpaint_engine()
@@ -370,10 +353,12 @@ class GenerationPipeline:
             if clothes_px == 0:
                 logger.info("Instance %d/%d skipped — no clothes mask in bbox", idx, len(active))
                 continue
-            span_start = _PROGRESS_PERSON_START + _PROGRESS_PERSON_SPAN * (idx - 1) / max(
+            span_start = GenerateProgress.PERSON_START + GenerateProgress.PERSON_SPAN * (
+                idx - 1
+            ) / max(len(active), 1)
+            span_end = GenerateProgress.PERSON_START + GenerateProgress.PERSON_SPAN * idx / max(
                 len(active), 1
             )
-            span_end = _PROGRESS_PERSON_START + _PROGRESS_PERSON_SPAN * idx / max(len(active), 1)
             result_image, crop_info = self._process_single_mask(
                 full_image,
                 person_m,
@@ -407,7 +392,7 @@ class GenerationPipeline:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        report(_PROGRESS_SAVE, "Saving result")
+        report(GenerateProgress.SAVE, "Saving result")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{username}_{ts}.png"
         out_path = self.settings.resolved_output_dir / filename
@@ -423,12 +408,6 @@ class GenerationPipeline:
         return full_image, filename, active_dir
 
 
-_pipeline: GenerationPipeline | None = None
-
-
+@lru_cache
 def get_pipeline() -> GenerationPipeline:
-    global _pipeline
-    if _pipeline is None:
-        logger.debug("Creating GenerationPipeline singleton")
-        _pipeline = GenerationPipeline()
-    return _pipeline
+    return GenerationPipeline()

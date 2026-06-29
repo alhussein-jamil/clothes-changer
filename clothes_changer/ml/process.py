@@ -1,4 +1,4 @@
-"""U2NET cloth segmentation — ported from original ClothLess."""
+"""U2NET cloth segmentation."""
 
 from __future__ import annotations
 
@@ -11,13 +11,19 @@ import torch
 from PIL import Image
 from torchvision import transforms
 
+from clothes_changer.constants import (
+    U2NET_INPUT_CHANNELS,
+    U2NET_INPUT_SIZE,
+    U2NET_NORMALIZE_MEAN,
+    U2NET_NORMALIZE_STD,
+    U2NET_OUTPUT_CLASSES,
+    U2NET_TENSOR_CHANNELS,
+)
 from clothes_changer.ml.network import U2NET
 
 logger = logging.getLogger(__name__)
 
-SHAPE1 = 1
-SHAPE3 = 3
-SHAPE18 = 18
+SHAPE1, SHAPE3, SHAPE18 = U2NET_TENSOR_CHANNELS
 
 
 def load_checkpoint(model: U2NET, checkpoint_path: str | Path) -> U2NET:
@@ -73,7 +79,9 @@ class NormalizeImage:
 
 
 def apply_transform(img: Image.Image) -> torch.Tensor:
-    transform_rgb = transforms.Compose([transforms.ToTensor(), NormalizeImage(0.5, 0.5)])
+    transform_rgb = transforms.Compose(
+        [transforms.ToTensor(), NormalizeImage(U2NET_NORMALIZE_MEAN, U2NET_NORMALIZE_STD)]
+    )
     return transform_rgb(img)
 
 
@@ -84,8 +92,14 @@ def generate_mask(
     device: str = "cpu",
 ) -> Image.Image:
     img_size = input_image.size
-    logger.debug("U2NET inference %dx%d → 768x768 on %s", *img_size, device)
-    img = input_image.resize((768, 768), Image.BICUBIC)
+    logger.debug(
+        "U2NET inference %dx%d → %dx%d on %s",
+        *img_size,
+        U2NET_INPUT_SIZE,
+        U2NET_INPUT_SIZE,
+        device,
+    )
+    img = input_image.resize((U2NET_INPUT_SIZE, U2NET_INPUT_SIZE), Image.BICUBIC)
     image_tensor = torch.unsqueeze(apply_transform(img), 0)
 
     with torch.no_grad():
@@ -101,7 +115,21 @@ def generate_mask(
 
 
 def load_seg_model(checkpoint_path: str | Path, device: str = "cpu") -> U2NET:
+    """Load U2NET on CPU first — safe when diffusers loads concurrently (meta tensors)."""
     logger.debug("Building U2NET on device=%s", device)
-    net = U2NET(in_ch=3, out_ch=4)
-    net = load_checkpoint(net, checkpoint_path)
-    return net.to(device).eval()
+    path = Path(checkpoint_path)
+    raw_state = torch.load(path, map_location="cpu", weights_only=False)
+    state_dict = OrderedDict()
+    for k, v in raw_state.items():
+        name = k[7:] if k.startswith("module.") else k
+        state_dict[name] = v
+
+    with torch.device("cpu"):
+        net = U2NET(in_ch=U2NET_INPUT_CHANNELS, out_ch=U2NET_OUTPUT_CLASSES)
+        net.load_state_dict(state_dict)
+        net.eval()
+
+    if device != "cpu":
+        net = net.to(device)
+    logger.debug("U2NET ready on %s (%d tensors)", device, len(state_dict))
+    return net

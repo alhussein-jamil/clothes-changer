@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
-import base64
-import io
 from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
+from clothes_changer.constants import (
+    BLEND_FEATHER_DIVISOR,
+    BLEND_MASK_GROW_DIVISOR,
+    CROP_BOX_PADDING_RATIO,
+    DEFAULT_MASK_GROW_PX,
+    INSTANCE_MASK_GROW_DIVISOR,
+    UI,
+)
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
-
-
-def pil_to_base64(image: Image.Image, fmt: str = "PNG") -> str:
-    buf = io.BytesIO()
-    image.save(buf, format=fmt)
-    return base64.b64encode(buf.getvalue()).decode()
 
 
 def resize_max(image: Image.Image, max_size: int) -> Image.Image:
@@ -32,8 +33,8 @@ def mask_overlay(
     image: Image.Image,
     person_mask: NDArray[np.uint8],
     clothes_mask: NDArray[np.uint8],
-    person_color: tuple[int, int, int, int] = (255, 0, 0, 100),
-    clothes_color: tuple[int, int, int, int] = (0, 255, 0, 100),
+    person_color: tuple[int, int, int, int] = UI.PERSON_COLOR,
+    clothes_color: tuple[int, int, int, int] = UI.CLOTHES_COLOR,
 ) -> Image.Image:
     """RGBA overlay for editor preview."""
     base = image.convert("RGBA")
@@ -88,74 +89,7 @@ def align_masks(
     return (person > 0).astype(np.uint8), (clothes > 0).astype(np.uint8)
 
 
-def pad_bbox(
-    bbox: tuple[int, int, int, int],
-    shape: tuple[int, int],
-    padding_ratio: float = 0.1,
-) -> tuple[int, int, int, int]:
-    top, left, bottom, right = bbox
-    h, w = shape
-    pad_h = int((bottom - top) * padding_ratio)
-    pad_w = int((right - left) * padding_ratio)
-    return clip_bbox(
-        (
-            max(0, top - pad_h),
-            max(0, left - pad_w),
-            min(h, bottom + pad_h),
-            min(w, right + pad_w),
-        ),
-        (h, w),
-    )
-
-
-def crop_square(
-    image: Image.Image,
-    mask: NDArray[np.uint8],
-    bbox: tuple[int, int, int, int],
-) -> tuple[Image.Image, NDArray[np.uint8], dict]:
-    """Crop region and pad to square with edge reflection."""
-    top, left, bottom, right = clip_bbox(bbox, mask.shape)
-    crop_img = image.crop((left, top, right, bottom))
-    crop_mask = mask[top:bottom, left:right]
-
-    cw, ch = crop_img.size
-    side = max(cw, ch)
-    pad_left = (side - cw) // 2
-    pad_top = (side - ch) // 2
-
-    square_img = Image.new("RGB", (side, side))
-    square_mask = np.zeros((side, side), dtype=np.uint8)
-
-    square_img.paste(crop_img, (pad_left, pad_top))
-    square_mask[pad_top : pad_top + ch, pad_left : pad_left + cw] = crop_mask
-
-    # Reflect-pad if not already square
-    if cw != ch:
-        arr = np.array(square_img)
-        arr = cv2.copyMakeBorder(
-            arr[pad_top : pad_top + ch, pad_left : pad_left + cw],
-            pad_top,
-            side - ch - pad_top,
-            pad_left,
-            side - cw - pad_left,
-            cv2.BORDER_REFLECT_101,
-        )
-        square_img = Image.fromarray(arr)
-        m = square_mask[pad_top : pad_top + ch, pad_left : pad_left + cw]
-        square_mask = cv2.copyMakeBorder(
-            m, pad_top, side - ch - pad_top, pad_left, side - cw - pad_left, cv2.BORDER_REFLECT_101
-        )
-
-    meta = {
-        "bbox": (top, left, bottom, right),
-        "pad": (pad_top, pad_left),
-        "side": side,
-        "orig_crop": (cw, ch),
-    }
-    return square_img, square_mask, meta
-
-
-def grow_mask(mask: np.ndarray, amount: int = 5) -> np.ndarray:
+def grow_mask(mask: np.ndarray, amount: int = DEFAULT_MASK_GROW_PX) -> np.ndarray:
     if amount <= 0:
         return mask
     k = amount if amount % 2 == 1 else amount + 1
@@ -163,18 +97,12 @@ def grow_mask(mask: np.ndarray, amount: int = 5) -> np.ndarray:
     return cv2.dilate(mask.astype(np.uint8), kernel)
 
 
-def feather_mask(mask: np.ndarray, radius: int = 5) -> np.ndarray:
-    pil = Image.fromarray((mask * 255).astype(np.uint8))
-    blurred = pil.filter(ImageFilter.GaussianBlur(radius))
-    return np.array(blurred, dtype=np.float32) / 255.0
-
-
 def apply_reflection_padding(
     image: Image.Image,
     new_size: tuple[int, int],
     center: tuple[int, int] | None = None,
 ) -> tuple[Image.Image, dict | None]:
-    """Pad image to square using reflection (original ClothLess)."""
+    """Pad image to square using edge reflection."""
     original_width, original_height = image.size
     new_width, new_height = new_size
 
@@ -281,16 +209,16 @@ def blend_images_with_enhancements(
     clothes_mask: Image.Image,
     person_mask: Image.Image,
 ) -> Image.Image:
-    """Feathered alpha blend matching the original ClothLess pipeline."""
+    """Feathered alpha blend for inpainted regions."""
     clothes_np = np.array(clothes_mask) > 0
     if not clothes_np.any():
         return original.convert("RGBA")
 
     top, left, bottom, right = get_bounding_box(clothes_np.astype(np.uint8))
-    grow_amount = max(bottom - top, right - left) // 30
+    grow_amount = max(bottom - top, right - left) // BLEND_MASK_GROW_DIVISOR
 
     grown = grow_mask_pil(clothes_mask, grow_amount)
-    feathered_mask = feather_mask_pil(grown, max(1, grow_amount // 4))
+    feathered_mask = feather_mask_pil(grown, max(1, grow_amount // BLEND_FEATHER_DIVISOR))
 
     # Suppress feather only in true background (outside person + clothes).
     person_np = np.array(person_mask.convert("L")) > 0
@@ -320,19 +248,10 @@ def composite_crop_onto(
     return Image.alpha_composite(base, layer).convert("RGB")
 
 
-def inpaint_mask_from_clothes(clothes_mask: NDArray[np.uint8]) -> NDArray[np.uint8]:
-    """Grow the diffusion mask so final feathering blends regenerated pixels."""
-    if clothes_mask.sum() == 0:
-        return clothes_mask
-    top, left, bottom, right = get_bounding_box(clothes_mask)
-    grow_amount = max((bottom - top + right - left) // 30, 8)
-    return grow_mask(clothes_mask, grow_amount)
-
-
 def get_crop_info(mask: Image.Image) -> dict:
     top, left, bottom, right = get_bounding_box(np.array(mask) > 0)
     max_dim = max(bottom - top, right - left)
-    padding = int(0.1 * max_dim)
+    padding = int(CROP_BOX_PADDING_RATIO * max_dim)
     target_size = max_dim + 2 * padding
     center_x, center_y = (left + right) // 2, (top + bottom) // 2
     return {
@@ -349,10 +268,9 @@ def prepare_instance_masks(
     clothes_mask: NDArray[np.uint8],
     bboxes: np.ndarray,
 ) -> list[tuple[NDArray[np.uint8], NDArray[np.uint8]]]:
-    """Split editor masks per detected person and grow masks like ClothLess.
+    """Split editor masks per detected person and grow mask regions.
 
-    The original pipeline assigns editor masks into detector bboxes first, then
-    performs a small growth pass based on each combined person/clothes extent.
+    Assigns editor masks into detector bboxes, then grows each combined mask.
     """
     instances: list[tuple[NDArray[np.uint8], NDArray[np.uint8]]] = []
     shape = person_mask.shape
@@ -370,30 +288,9 @@ def prepare_instance_masks(
     for i, (person, clothes) in enumerate(instances):
         combined = np.logical_or(person, clothes)
         top, left, bottom, right = get_bounding_box(combined.astype(np.uint8))
-        grow_amount = (bottom - top + right - left) // 60
+        grow_amount = (bottom - top + right - left) // INSTANCE_MASK_GROW_DIVISOR
         instances[i] = (
             grow_mask(person, grow_amount),
             grow_mask(clothes, grow_amount),
         )
     return instances
-
-
-def separate_instances(
-    person_mask: NDArray[np.uint8],
-    clothes_mask: NDArray[np.uint8],
-    min_area_ratio: float = 0.02,
-) -> list[tuple[NDArray[np.uint8], NDArray[np.uint8]]]:
-    """Split multi-person scenes via connected components."""
-    combined = np.logical_or(person_mask, clothes_mask).astype(np.uint8)
-    num_labels, labels = cv2.connectedComponents(combined)
-    h, w = combined.shape
-    min_area = h * w * min_area_ratio
-    instances = []
-    for label_id in range(1, num_labels):
-        region = labels == label_id
-        if region.sum() < min_area:
-            continue
-        p = person_mask & region
-        c = clothes_mask & region
-        instances.append((p.astype(np.uint8), c.astype(np.uint8)))
-    return instances or [(person_mask, clothes_mask)]

@@ -4,35 +4,31 @@ app:
 
 prompts:
   default: >-
-    athletic, abs, toned, natural, perfect detailed nipples, nude, high quality,
-    natural skin, normal light, high definition, extreme details, stretch marks,
-    clear, slender, naked, busty, skin details, photography, professional,
-    phone camera, detailed, high quality, goose bumps, saggy, erotic, sensual,
-    realistic
+    high quality photo, detailed fabric texture, natural lighting, realistic clothing,
+    sharp focus, professional photography, accurate colors, clean composition
   negative: >-
-    worst quality, low quality, bad, illustration, tattoos, chains, absurde,
-    marks, strings, piercings, 3d, 2d, painting, cartoons, sketch, open mouth,
-    lowres, text, error, cropped, worst quality, low quality, jpeg artifacts,
-    ugly, duplicate, morbid, mutilated, out of frame, extra fingers, mutated
-    hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry,
-    dehydrated, bad anatomy, bad proportions, extra limbs, cloned face,
-    disfigured, gross proportions, malformed limbs, missing arms, missing legs,
-    extra arms, extra legs, fused fingers, too many fingers, long neck,
-    username, watermark, signature, (((hand))), (((fingers))), (((finger))),
-    weird feet, hands, disfigured, overexposed, oversaturated, mutated body
-    parts, bad composition, low resolution
+    worst quality, low quality, blurry, deformed, bad anatomy, extra limbs,
+    watermark, text, logo, cropped, jpeg artifacts, oversaturated, overexposed,
+    duplicate, mutation, disfigured, poorly drawn hands, poorly drawn face
 
 models:
-  default_inpaint: realisticVisionV60B1_v51HyperInpaintVAE.safetensors
-  download_urls:
-    realisticVisionV60B1_v51HyperInpaintVAE.safetensors: >-
-      https://civitai.com/api/download/models/501286
-    realisticVisionV60B1_v51HyperInpaintVAE_full.safetensors: >-
-      https://civitai.com/api/download/models/501286
-    lazymixRealAmateur_v40Inpainting.safetensors: >-
-      https://civitai.com/api/download/models/302254
-    clarity_V3-inpainting.safetensors: >-
-      https://civitai.com/api/download/models/145163
+  # Hugging Face SD1.5 inpaint — works without a local checkpoint file.
+  default_inpaint: runwayml/stable-diffusion-inpainting
+  segformer: mattmdjaga/segformer_b2_clothes
+  extra_clothes: cloth_segm.pth
+  controlnet: lllyasviel/sd-controlnet-openpose
+
+generation:
+  use_controlnet: true
+  steps: 50
+  guidance_scale: 6.5
+  inference_size: 512
+  min_inference_size: 256
+
+pose:
+  detection_threshold: 0.5
+  keypoint_threshold: 0.3
+  mode: balanced
 
 ui:
   title_html: |

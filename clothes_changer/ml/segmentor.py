@@ -1,4 +1,4 @@
-"""Clothes segmentation — SegFormer B2 + U2NET (original ClothLess stack)."""
+"""Clothes segmentation — SegFormer B2 + U2NET."""
 
 from __future__ import annotations
 
@@ -13,15 +13,23 @@ from torchvision.transforms.functional import pil_to_tensor
 from transformers import AutoModelForSemanticSegmentation, SegformerImageProcessor
 
 from clothes_changer.config import Settings, get_settings
-from clothes_changer.ml.gpu_memory import free_cuda_cache, prefer_cpu_for_segmentation
+from clothes_changer.constants import (
+    CLOTHES_SEGFORMER_CATEGORIES,
+    PERSON_SEGFORMER_CATEGORIES,
+)
+from clothes_changer.ml.gpu_memory import (
+    free_cuda_cache,
+    model_load_lock,
+    prefer_cpu_for_segmentation,
+)
 from clothes_changer.ml.pipeline_debug import PipelineDebugSession
 from clothes_changer.ml.process import generate_mask, get_palette, load_seg_model
 from clothes_changer.utils.logging import log_duration
 
 logger = logging.getLogger(__name__)
 
-PERSON_CATEGORIES = [1, 2, 3, 11, 12, 13, 14, 15, 9, 10, 16]
-CLOTHES_CATEGORIES = [4, 5, 6, 7, 8, 16, 17]
+PERSON_CATEGORIES = list(PERSON_SEGFORMER_CATEGORIES)
+CLOTHES_CATEGORIES = list(CLOTHES_SEGFORMER_CATEGORIES)
 
 
 class ClothesSegmentor:
@@ -52,32 +60,43 @@ class ClothesSegmentor:
 
     def _load(self) -> None:
         with self._lock:
-            if self._model is not None:
+            if self._model is not None and self._u2net is not None:
                 return
             segformer_id = self.settings.segformer_model
-            with log_duration(logger, "load segmentation models", device=self.device):
-                logger.info(
-                    "Loading SegFormer clothes model (%s) on %s...",
-                    segformer_id,
-                    self.device,
-                )
-                self._processor = SegformerImageProcessor.from_pretrained(segformer_id)
-                self._model = AutoModelForSemanticSegmentation.from_pretrained(segformer_id)
-                self._model = self._model.to(self.device)
+            try:
+                with model_load_lock():
+                    with log_duration(logger, "load segmentation models", device=self.device):
+                        logger.info(
+                            "Loading SegFormer clothes model (%s) on %s...",
+                            segformer_id,
+                            self.device,
+                        )
+                        self._processor = SegformerImageProcessor.from_pretrained(segformer_id)
+                        self._model = AutoModelForSemanticSegmentation.from_pretrained(
+                            segformer_id,
+                            low_cpu_mem_usage=False,
+                        )
+                        self._model = self._model.to(self.device)
 
-                u2net_path = self.settings.resolved_models_dir / self.settings.extra_clothes_model
-                from clothes_changer.scripts.download_models import (
-                    cloth_segm_checkpoint_valid,
-                    download_cloth_segm,
-                )
+                        u2net_path = (
+                            self.settings.resolved_models_dir / self.settings.extra_clothes_model
+                        )
+                        from clothes_changer.ml.checkpoints import cloth_segm_checkpoint_valid
+                        from clothes_changer.scripts.download_models import download_cloth_segm
 
-                if not cloth_segm_checkpoint_valid(u2net_path):
-                    logger.info("U2NET weights missing or invalid — triggering download")
-                    download_cloth_segm(self.settings.resolved_models_dir)
-                logger.info("Loading U2NET cloth model from %s", u2net_path)
-                self._u2net = load_seg_model(u2net_path, device=self.device)
-                self._palette = get_palette(4)
-            logger.info("Clothes segmentation models ready")
+                        if not cloth_segm_checkpoint_valid(u2net_path):
+                            logger.info("U2NET weights missing or invalid — triggering download")
+                            download_cloth_segm(self.settings.resolved_models_dir)
+                        logger.info("Loading U2NET cloth model from %s", u2net_path)
+                        self._u2net = load_seg_model(u2net_path, device=self.device)
+                        self._palette = get_palette(4)
+                    logger.info("Clothes segmentation models ready")
+            except Exception:
+                self._processor = None
+                self._model = None
+                self._u2net = None
+                self._palette = None
+                raise
 
     def segment_clothes(
         self,

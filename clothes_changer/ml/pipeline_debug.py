@@ -12,7 +12,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from clothes_changer.config import Settings, get_settings
+from clothes_changer.config import Settings
+from clothes_changer.constants import MASK_ON
 from clothes_changer.utils.image import mask_overlay
 
 logger = logging.getLogger(__name__)
@@ -75,7 +76,7 @@ class PipelineDebugSession:
         image.save(path)
 
     def save_mask(self, rel_path: str, mask: np.ndarray) -> None:
-        arr = (mask > 0).astype(np.uint8) * 255
+        arr = (mask > 0).astype(np.uint8) * MASK_ON
         self.save_image(rel_path, Image.fromarray(arr, mode="L"))
 
     def save_tensor_mask(self, rel_path: str, mask: torch.Tensor) -> None:
@@ -92,13 +93,3 @@ class PipelineDebugSession:
         clothes: np.ndarray,
     ) -> None:
         self.save_image(rel_path, mask_overlay(image.convert("RGB"), person, clothes))
-
-    def person_dir(self, index: int) -> Path:
-        path = self.root / f"person_{index:02d}"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-
-def maybe_debug_session(username: str) -> PipelineDebugSession | None:
-    session, _ = PipelineDebugSession.open_or_create(get_settings(), username, None)
-    return session

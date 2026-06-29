@@ -14,7 +14,7 @@ def _clear_settings_cache():
 
 def test_log_level_from_env(monkeypatch):
     monkeypatch.setenv("CLOTHES_CHANGER_LOG_LEVEL", "WARNING")
-    monkeypatch.delenv("CLOTHES_CHANGER_DEBUG", raising=False)
+    monkeypatch.setenv("CLOTHES_CHANGER_DEBUG", "false")
     settings = get_settings()
     assert settings.log_level == "WARNING"
     assert settings.resolved_log_level() == logging.WARNING
@@ -22,6 +22,7 @@ def test_log_level_from_env(monkeypatch):
 
 def test_log_level_case_insensitive(monkeypatch):
     monkeypatch.setenv("CLOTHES_CHANGER_LOG_LEVEL", "error")
+    monkeypatch.setenv("CLOTHES_CHANGER_DEBUG", "false")
     settings = get_settings()
     assert settings.log_level == "ERROR"
     assert settings.resolved_log_level() == logging.ERROR

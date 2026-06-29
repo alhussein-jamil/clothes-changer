@@ -6,7 +6,8 @@ from PIL import Image
 
 from clothes_changer.ui.constants import EDITOR_CANVAS_SIZE
 from clothes_changer.ui.gradio_app import GradioApp
-from clothes_changer.ui.masks import apply_masks_to_editor
+from clothes_changer.ui.masks import apply_masks_to_editor, background_key_from_image
+from clothes_changer.utils.image import mask_overlay
 
 
 def test_authenticate(db):
@@ -20,45 +21,18 @@ def _editor_value(update: dict) -> dict:
     return update.get("value", update)
 
 
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_load_history_and_segment(mock_get_segmentor, db, tmp_path):
-    app = GradioApp(db=db)
-    img_path = tmp_path / "admin_test.png"
-    Image.new("RGB", (32, 32), color=(128, 64, 32)).save(img_path)
-
-    person = np.zeros((32, 32), dtype=np.uint8)
-    clothes = np.zeros((32, 32), dtype=np.uint8)
-    clothes[10:20, 10:20] = 1
-    mock_get_segmentor.return_value.segment.return_value = (
-        np.zeros((32, 32)),
-        person,
-        clothes,
-    )
-
-    evt = gr.SelectData(
-        target=None,
-        data={"index": 0, "value": str(img_path), "selected": True},
-    )
-    editor_update, clean, key, skip, _ = app.load_history_and_segment(evt, None, None)
-    value = _editor_value(editor_update)
-    assert np.array(value["layers"][0])[15, 15, 1] > 50  # clothes mask visible in layer
-    assert clean.size == (32, 32)
-    assert key is not None
-    assert skip is True
-
-
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_segment_after_example(mock_get_segmentor, db):
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_segment_after_example(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(200, 100, 50))
 
     person = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)  # HxW
     clothes = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
     clothes[50:150, 50:150] = 1
-    mock_get_segmentor.return_value.segment.return_value = (
-        np.zeros(EDITOR_CANVAS_SIZE[::-1]),
+    mock_run_segmentation.return_value = (
         person,
         clothes,
+        None,
     )
 
     editor = apply_masks_to_editor(
@@ -74,52 +48,14 @@ def test_segment_after_example(mock_get_segmentor, db):
     assert skip is True
 
 
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_segment_if_unmasked_runs_when_no_masks(mock_get_segmentor, db):
-    app = GradioApp(db=db)
-    Image.new("RGB", (32, 32))
-    person = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
-    clothes = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
-    clothes[50:150, 50:150] = 1
-    mock_get_segmentor.return_value.segment.return_value = (
-        np.zeros(EDITOR_CANVAS_SIZE[::-1]),
-        person,
-        clothes,
-    )
-
-    editor = apply_masks_to_editor(
-        Image.new("RGB", EDITOR_CANVAS_SIZE),
-        np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8),
-        np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8),
-    )
-    editor_value, clean = app.segment_if_unmasked(editor)
-    value = editor_value.get("value", editor_value)
-    assert np.array(value["layers"][0])[100, 100, 1] > 50
-    assert clean is not None
-
-
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_segment_if_unmasked_skips_existing_masks(mock_get_segmentor, db):
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_segment(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", (32, 32))
     person = np.zeros((32, 32), dtype=np.uint8)
     clothes = np.zeros((32, 32), dtype=np.uint8)
     clothes[5:15, 5:15] = 1
-    editor = apply_masks_to_editor(bg, person, clothes)
-    editor_value, clean = app.segment_if_unmasked(editor)
-    assert editor_value == gr.update()
-    assert clean is not None
-    mock_get_segmentor.assert_not_called()
-
-
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_segment(mock_get_segmentor, db):
-    app = GradioApp(db=db)
-    bg = Image.new("RGB", (32, 32))
-    person = np.zeros((32, 32), dtype=np.uint8)
-    clothes = np.zeros((32, 32), dtype=np.uint8)
-    clothes[5:15, 5:15] = 1
-    mock_get_segmentor.return_value.segment.return_value = (np.zeros((32, 32)), person, clothes)
+    mock_run_segmentation.return_value = (person, clothes, None)
 
     editor = apply_masks_to_editor(bg, person, clothes)
     editor_value, clean = app.segment(editor)
@@ -128,24 +64,20 @@ def test_segment(mock_get_segmentor, db):
     assert clean is not None
 
 
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_run_segmentation_uses_full_res_editor_background(mock_get_segmentor, db):
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_run_segmentation_uses_full_res_editor_background(mock_run_segmentation, db):
     """Masks must match Gradio's native background size, not a letterboxed canvas."""
     app = GradioApp(db=db)
     full_bg = Image.new("RGB", (800, 600), color=(100, 50, 25))
     person = np.zeros((600, 800), dtype=np.uint8)
     clothes = np.zeros((600, 800), dtype=np.uint8)
     clothes[100:200, 100:200] = 1
-    mock_get_segmentor.return_value.segment.return_value = (
-        np.zeros((600, 800)),
-        person,
-        clothes,
-    )
+    mock_run_segmentation.return_value = (person, clothes, None)
 
     editor = {"background": full_bg, "layers": [], "composite": None}
     result = app._run_segmentation(editor)
 
-    seg_call = mock_get_segmentor.return_value.segment.call_args[0][0]
+    seg_call = mock_run_segmentation.call_args[0][0]
     assert seg_call.size == (800, 600)
     assert result.pipeline_clean.size == (800, 600)
     assert result.editor_value["background"].size == (800, 600)
@@ -154,8 +86,8 @@ def test_run_segmentation_uses_full_res_editor_background(mock_get_segmentor, db
     assert int(np.array(result.editor_value["layers"][0])[:, :, 1].sum()) > 0
 
 
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_resegment_recovers_from_segment_key(mock_get_segmentor, db, tmp_path):
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_resegment_recovers_from_segment_key(mock_run_segmentation, db, tmp_path):
     app = GradioApp(db=db)
     img_path = tmp_path / "redo.png"
     Image.new("RGB", (64, 64), color=(40, 80, 120)).save(img_path)
@@ -164,11 +96,7 @@ def test_resegment_recovers_from_segment_key(mock_get_segmentor, db, tmp_path):
     person = np.zeros((64, 64), dtype=np.uint8)
     clothes = np.zeros((64, 64), dtype=np.uint8)
     clothes[20:40, 20:40] = 1
-    mock_get_segmentor.return_value.segment.return_value = (
-        np.zeros((64, 64)),
-        person,
-        clothes,
-    )
+    mock_run_segmentation.return_value = (person, clothes, None)
 
     empty_editor = {"background": None, "layers": [], "composite": None}
     cleared, clean, out_key, skip_prepare, _ = app.resegment_prepare(
@@ -187,8 +115,8 @@ def test_resegment_recovers_from_segment_key(mock_get_segmentor, db, tmp_path):
     assert out_key is not None
 
 
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_prepare_upload_segment_preserves_clean_source_on_empty_editor(mock_get_segmentor, db):
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_prepare_upload_segment_preserves_clean_source_on_empty_editor(mock_run_segmentation, db):
     app = GradioApp(db=db)
     clean = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(1, 2, 3))
     empty_editor = {"background": None, "layers": [], "composite": None}
@@ -198,12 +126,12 @@ def test_prepare_upload_segment_preserves_clean_source_on_empty_editor(mock_get_
     assert pending == gr.skip()
     assert out_clean is clean
     assert key == "path:/tmp/x.png"
-    mock_get_segmentor.assert_not_called()
+    mock_run_segmentation.assert_not_called()
 
 
 def test_sync_clean_source_never_overwrites_pristine(db):
     app = GradioApp(db=db)
-    from clothes_changer.utils.image import mask_overlay
+    from clothes_changer.ui.editor_session import EditorSession, resolve_clean_on_upload
 
     pristine = Image.new("RGB", (64, 48), color=(100, 100, 100))
     person = np.zeros((48, 64), dtype=np.uint8)
@@ -215,8 +143,9 @@ def test_sync_clean_source_never_overwrites_pristine(db):
         "layers": [],
         "composite": overlay_bg,
     }
-    out = app.sync_clean_source(editor, pristine, None)
-    assert out is pristine
+    session = EditorSession.from_fields(pristine, None, None, False)
+    assert resolve_clean_on_upload(editor, session) is pristine
+    assert app.sync_clean_source(editor, pristine, None) is pristine
 
 
 def test_pipeline_source_prefers_clean_source_over_editor(db, tmp_path):
@@ -232,20 +161,20 @@ def test_pipeline_source_prefers_clean_source_over_editor(db, tmp_path):
     assert app._pipeline_source(None, None, key).size == pristine.size
 
 
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_prepare_upload_segment_retries_after_empty_masks(mock_get_segmentor, db):
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_prepare_upload_segment_retries_after_empty_masks(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(10, 20, 30))
     person = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
     clothes = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
     clothes[80:200, 80:200] = 1
-    mock_get_segmentor.return_value.segment.side_effect = [
+    mock_run_segmentation.side_effect = [
         (
-            np.zeros(EDITOR_CANVAS_SIZE[::-1]),
             np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8),
             np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8),
+            None,
         ),
-        (np.zeros(EDITOR_CANVAS_SIZE[::-1]), person, clothes),
+        (person, clothes, None),
     ]
 
     editor = apply_masks_to_editor(
@@ -256,23 +185,23 @@ def test_prepare_upload_segment_retries_after_empty_masks(mock_get_segmentor, db
     pending1, clean, key1, _, _ = app.prepare_upload_segment(editor, None, None, False, None, None)
     assert pending1 == gr.skip()
     assert key1 is not None
-    assert mock_get_segmentor.return_value.segment.call_count == 1
+    assert mock_run_segmentation.call_count == 1
 
     pending2, _, key2, skip2, _ = app.prepare_upload_segment(editor, key1, clean, False, None, None)
     assert pending2 is not None
     assert key2 is not None
     assert skip2 is True
-    assert mock_get_segmentor.return_value.segment.call_count == 2
+    assert mock_run_segmentation.call_count == 2
 
 
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_prepare_upload_segment_skips_repeat(mock_get_segmentor, db):
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_prepare_upload_segment_skips_repeat(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", (32, 32), color=(10, 20, 30))
     person = np.zeros((32, 32), dtype=np.uint8)
     clothes = np.zeros((32, 32), dtype=np.uint8)
     clothes[5:15, 5:15] = 1
-    mock_get_segmentor.return_value.segment.return_value = (np.zeros((32, 32)), person, clothes)
+    mock_run_segmentation.return_value = (person, clothes, None)
 
     editor = apply_masks_to_editor(
         bg,
@@ -284,7 +213,7 @@ def test_prepare_upload_segment_skips_repeat(mock_get_segmentor, db):
     assert clean is not None
     assert key is not None
     assert skip is True
-    assert mock_get_segmentor.return_value.segment.call_count == 1
+    assert mock_run_segmentation.call_count == 1
     assert np.array(_editor_value(pending)["layers"][0]).shape == (32, 32, 4)
 
     masked_editor = apply_masks_to_editor(bg, person, clothes)
@@ -294,21 +223,21 @@ def test_prepare_upload_segment_skips_repeat(mock_get_segmentor, db):
     assert pending2 == gr.skip()
     assert same_key == key
     assert skip2 is False
-    assert mock_get_segmentor.return_value.segment.call_count == 1
+    assert mock_run_segmentation.call_count == 1
 
 
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_prepare_upload_segment_resegments_when_masks_stale(mock_get_segmentor, db):
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_prepare_upload_segment_resegments_when_masks_stale(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg_a = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(10, 20, 30))
     bg_b = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(40, 50, 60))
     person = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
     clothes = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
     clothes[80:200, 80:200] = 1
-    mock_get_segmentor.return_value.segment.return_value = (
-        np.zeros(EDITOR_CANVAS_SIZE[::-1]),
+    mock_run_segmentation.return_value = (
         person,
         clothes,
+        None,
     )
 
     editor_a = apply_masks_to_editor(
@@ -320,7 +249,7 @@ def test_prepare_upload_segment_resegments_when_masks_stale(mock_get_segmentor, 
         editor_a, None, None, False, None, None
     )
     assert pending is not None
-    assert mock_get_segmentor.return_value.segment.call_count == 1
+    assert mock_run_segmentation.call_count == 1
 
     masked_a = apply_masks_to_editor(bg_a, person, clothes)
     pending2, _, same_key, _, _ = app.prepare_upload_segment(
@@ -328,17 +257,17 @@ def test_prepare_upload_segment_resegments_when_masks_stale(mock_get_segmentor, 
     )
     assert pending2 == gr.skip()
     assert same_key == key_a
-    assert mock_get_segmentor.return_value.segment.call_count == 1
+    assert mock_run_segmentation.call_count == 1
 
     masked_b = apply_masks_to_editor(bg_b, person, clothes)
     pending3, _, key_b, _, _ = app.prepare_upload_segment(masked_b, key_a, clean, False, None, None)
     assert pending3 is not None
     assert key_b != key_a
-    assert mock_get_segmentor.return_value.segment.call_count == 2
+    assert mock_run_segmentation.call_count == 2
 
 
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_load_example_after_select(mock_get_segmentor, db, tmp_path):
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_load_example_after_select(mock_run_segmentation, db, tmp_path):
     app = GradioApp(db=db)
     img_path = tmp_path / "example.png"
     Image.new("RGB", (48, 48), color=(200, 100, 50)).save(img_path)
@@ -347,10 +276,10 @@ def test_load_example_after_select(mock_get_segmentor, db, tmp_path):
     person = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
     clothes = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
     clothes[80:200, 80:200] = 1
-    mock_get_segmentor.return_value.segment.return_value = (
-        np.zeros(EDITOR_CANVAS_SIZE[::-1]),
+    mock_run_segmentation.return_value = (
         person,
         clothes,
+        None,
     )
 
     editor = {
@@ -366,18 +295,141 @@ def test_load_example_after_select(mock_get_segmentor, db, tmp_path):
     assert skip is True
 
 
-@patch("clothes_changer.ml.segmentor.get_segmentor")
-def test_prepare_upload_segment_skips_programmatic_load(mock_get_segmentor, db):
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_prepare_upload_segment_skips_programmatic_load(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", (32, 32), color=(10, 20, 30))
     editor = apply_masks_to_editor(
         bg, np.zeros((32, 32), dtype=np.uint8), np.zeros((32, 32), dtype=np.uint8)
     )
-    pending, clean, key, skip, _ = app.prepare_upload_segment(
-        editor, "path:/tmp/x.png", bg, True, None, None
-    )
+    key = background_key_from_image(bg)
+    pending, clean, out_key, skip, _ = app.prepare_upload_segment(editor, key, bg, True, None, None)
     assert pending == gr.skip()
     assert clean is bg
-    assert key == "path:/tmp/x.png"
+    assert out_key == key
     assert skip is False
-    mock_get_segmentor.assert_not_called()
+    mock_run_segmentation.assert_not_called()
+
+
+def test_clear_editor_state_resets_suppress_upload_hook(db):
+    app = GradioApp(db=db)
+    assert app.clear_editor_state() == (None, None, False, None)
+
+
+def test_compose_generation_params_admin(db):
+    app = GradioApp(db=db)
+    db.register_user("admin_user", "password123", credits=10, is_admin=True)
+    params = app._compose_generation_params(
+        is_admin=True,
+        prompt="custom prompt",
+        negative_prompt="custom negative",
+        user_prompt_addon="ignored",
+        model_id=app.default_model,
+        use_controlnet=False,
+        steps=40,
+        guidance_scale=5.5,
+        seed=42,
+        random_seed=False,
+    )
+    assert params["prompt"] == "custom prompt"
+    assert params["negative_prompt"] == "custom negative"
+    assert params["model_id"] == app.default_model
+    assert params["use_controlnet"] is False
+    assert params["steps"] == 40
+    assert params["seed"] == 42
+
+
+@patch("clothes_changer.ui.gradio_app.get_default_prompt", return_value="base outfit prompt")
+@patch(
+    "clothes_changer.ui.gradio_app.get_default_negative_prompt",
+    return_value="base negative",
+)
+def test_compose_generation_params_user_addon(mock_neg, mock_pos, db):
+    app = GradioApp(db=db)
+    params = app._compose_generation_params(
+        is_admin=False,
+        prompt="admin-only",
+        negative_prompt="admin-only negative",
+        user_prompt_addon="red dress",
+        model_id="other-model.safetensors",
+        use_controlnet=False,
+        steps=10,
+        guidance_scale=3.0,
+        seed=1,
+        random_seed=False,
+    )
+    assert params["prompt"] == "red dress, base outfit prompt"
+    assert params["negative_prompt"] == "base negative"
+    assert params["model_id"] == app.default_model
+    assert params["use_controlnet"] == app.settings.use_controlnet
+    assert params["steps"] == app.settings.inpaint_steps
+
+
+@patch("clothes_changer.ui.gradio_app.get_default_prompt", return_value="base outfit prompt")
+@patch(
+    "clothes_changer.ui.gradio_app.get_default_negative_prompt",
+    return_value="base negative",
+)
+def test_compose_generation_params_user_without_addon(mock_neg, mock_pos, db):
+    app = GradioApp(db=db)
+    params = app._compose_generation_params(
+        is_admin=False,
+        prompt="",
+        negative_prompt="",
+        user_prompt_addon="",
+        model_id="other-model.safetensors",
+        use_controlnet=True,
+        steps=99,
+        guidance_scale=9.0,
+        seed=7,
+        random_seed=False,
+    )
+    assert params["prompt"] == "base outfit prompt"
+    assert params["model_id"] == app.default_model
+
+
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_prepare_upload_segment_runs_after_clear_despite_stale_suppress(mock_run_segmentation, db):
+    """Clear resets suppress_upload_hook; new upload must segment even if flag was True."""
+    app = GradioApp(db=db)
+    bg_old = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(10, 20, 30))
+    bg_new = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(40, 50, 60))
+    person = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
+    clothes = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
+    clothes[80:200, 80:200] = 1
+    mock_run_segmentation.return_value = (person, clothes, None)
+
+    masked_old = apply_masks_to_editor(bg_old, person, clothes)
+    _, clean, key_old, _, _ = app.prepare_upload_segment(masked_old, None, None, False, None, None)
+    assert mock_run_segmentation.call_count == 1
+
+    # New upload with stale skip flag but different image must still segment
+    empty = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
+    editor_new = apply_masks_to_editor(bg_new, empty, empty)
+    pending, out_clean, key_new, skip, _ = app.prepare_upload_segment(
+        editor_new, key_old, clean, True, None, None
+    )
+    assert pending is not None
+    assert key_new != key_old
+    assert skip is True
+    assert mock_run_segmentation.call_count == 2
+
+
+@patch("clothes_changer.ui.gradio_app.run_segmentation")
+def test_prepare_upload_segment_stale_suppress_same_key_still_skips(mock_run_segmentation, db):
+    app = GradioApp(db=db)
+    bg = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(10, 20, 30))
+    person = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
+    clothes = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
+    clothes[80:200, 80:200] = 1
+    mock_run_segmentation.return_value = (person, clothes, None)
+
+    empty = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
+    editor = apply_masks_to_editor(bg, empty, empty)
+    _, clean, key, _, _ = app.prepare_upload_segment(editor, None, None, False, None, None)
+    masked = apply_masks_to_editor(bg, person, clothes)
+    pending, _, same_key, skip, _ = app.prepare_upload_segment(masked, key, clean, True, None, None)
+    assert pending == gr.skip()
+    assert same_key == key
+    assert skip is False
+    assert mock_run_segmentation.call_count == 1

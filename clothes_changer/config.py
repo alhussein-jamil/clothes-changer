@@ -1,13 +1,17 @@
-"""Application configuration via environment variables."""
+"""Runtime configuration via environment variables.
+
+Deployment settings (host, paths, auth, debug) live in ``.env``.
+Content and ML defaults (prompts, models, generation) live in ``config/content*.yaml``.
+"""
 
 import logging
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from clothes_changer.content_config import get_default_inpaint_model
+from clothes_changer import content_config
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +20,7 @@ PROJECT_ROOT = _PROJECT_ROOT
 
 
 class Settings(BaseSettings):
-    """Central configuration — single source of truth."""
+    """Deployment and runtime settings — not duplicated in YAML."""
 
     model_config = SettingsConfigDict(
         env_prefix="CLOTHES_CHANGER_",
@@ -29,7 +33,6 @@ class Settings(BaseSettings):
     port: int = 7860
     debug: bool = False
     log_level: str = "INFO"
-    secret_key: str = Field(default="dev-secret-change-me")
 
     models_dir: Path = Path("models")
     output_dir: Path = Path("outputs")
@@ -37,32 +40,66 @@ class Settings(BaseSettings):
     examples_dir: Path = Path("examples")
     favicon_path: Path = Path("static/favicon.ico")
     enable_sharing: bool = False
-    require_auth: bool = False
+    require_auth: bool = True
 
     max_image_size: int = 1024
-    session_hours: int = 8
 
     default_admin: str = "admin"
     default_password: str = "admin"
     default_credits: int = 100
 
-    # ML
-    use_controlnet: bool = True
-    controlnet_model: str = "lllyasviel/sd-controlnet-openpose"
-    inpaint_model: str = Field(default_factory=get_default_inpaint_model)
-    extra_clothes_model: str = "cloth_segm.pth"
-    segformer_model: str = "mattmdjaga/segformer_b2_clothes"
-    detection_threshold: float = 0.5
-    pose_keypoint_threshold: float = 0.3
-    pose_mode: str = "balanced"
-    inpaint_steps: int = 50
-    guidance_scale: float = 6.5
-    inference_size: int = 512
-    min_inference_size: int = 256
-
-    # Pipeline debug dumps (images per step + run_metadata.json)
     pipeline_debug: bool = False
     pipeline_debug_dir: Path = Path("debug-pipeline")
+
+    # --- ML / content (from YAML; env vars intentionally not supported) ---
+
+    @property
+    def use_controlnet(self) -> bool:
+        return content_config.get_use_controlnet()
+
+    @property
+    def controlnet_model(self) -> str:
+        return content_config.get_controlnet_model()
+
+    @property
+    def inpaint_model(self) -> str:
+        return content_config.get_default_inpaint_model()
+
+    @property
+    def extra_clothes_model(self) -> str:
+        return content_config.get_extra_clothes_model()
+
+    @property
+    def segformer_model(self) -> str:
+        return content_config.get_segformer_model()
+
+    @property
+    def detection_threshold(self) -> float:
+        return content_config.get_detection_threshold()
+
+    @property
+    def pose_keypoint_threshold(self) -> float:
+        return content_config.get_pose_keypoint_threshold()
+
+    @property
+    def pose_mode(self) -> str:
+        return content_config.get_pose_mode()
+
+    @property
+    def inpaint_steps(self) -> int:
+        return content_config.get_inpaint_steps()
+
+    @property
+    def guidance_scale(self) -> float:
+        return content_config.get_guidance_scale()
+
+    @property
+    def inference_size(self) -> int:
+        return content_config.get_inference_size()
+
+    @property
+    def min_inference_size(self) -> int:
+        return content_config.get_min_inference_size()
 
     @field_validator("log_level", mode="before")
     @classmethod

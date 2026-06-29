@@ -1,4 +1,4 @@
-"""Branded copy, prompts, and model defaults from YAML (local overrides default)."""
+"""Branded copy, prompts, and ML defaults from YAML (local overrides default)."""
 
 from __future__ import annotations
 
@@ -50,6 +50,23 @@ def clear_content_config_cache() -> None:
     get_content_config.cache_clear()
 
 
+def _section(name: str) -> dict[str, Any]:
+    value = get_content_config().get(name, {})
+    return value if isinstance(value, dict) else {}
+
+
+def _models() -> dict[str, Any]:
+    return _section("models")
+
+
+def _generation() -> dict[str, Any]:
+    return _section("generation")
+
+
+def _pose() -> dict[str, Any]:
+    return _section("pose")
+
+
 def get_app_name() -> str:
     return str(get_content_config().get("app", {}).get("name", "Clothes Changer"))
 
@@ -71,13 +88,58 @@ def get_title_html() -> str:
 
 
 def get_default_inpaint_model() -> str:
-    return str(
-        get_content_config()
-        .get("models", {})
-        .get("default_inpaint", "realisticVisionV60B1_v51HyperInpaintVAE.safetensors")
-    )
+    return str(_models().get("default_inpaint", "runwayml/stable-diffusion-inpainting"))
+
+
+def get_segformer_model() -> str:
+    return str(_models().get("segformer", "mattmdjaga/segformer_b2_clothes"))
+
+
+def get_extra_clothes_model() -> str:
+    return str(_models().get("extra_clothes", "cloth_segm.pth"))
+
+
+def get_controlnet_model() -> str:
+    return str(_models().get("controlnet", "lllyasviel/sd-controlnet-openpose"))
+
+
+def get_use_controlnet() -> bool:
+    return bool(_generation().get("use_controlnet", True))
+
+
+def get_inpaint_steps() -> int:
+    return int(_generation().get("steps", 50))
+
+
+def get_guidance_scale() -> float:
+    return float(_generation().get("guidance_scale", 6.5))
+
+
+def get_inference_size() -> int:
+    return int(_generation().get("inference_size", 512))
+
+
+def get_min_inference_size() -> int:
+    return int(_generation().get("min_inference_size", 256))
+
+
+def get_detection_threshold() -> float:
+    return float(_pose().get("detection_threshold", 0.5))
+
+
+def get_pose_keypoint_threshold() -> float:
+    return float(_pose().get("keypoint_threshold", 0.3))
+
+
+def get_pose_mode() -> str:
+    return str(_pose().get("mode", "balanced"))
 
 
 def get_checkpoint_urls() -> dict[str, str]:
-    urls = get_content_config().get("models", {}).get("download_urls", {})
+    urls = _models().get("download_urls", {})
     return {str(k): str(v) for k, v in urls.items()}
+
+
+def get_model_aliases() -> dict[str, list[str]]:
+    raw = _models().get("aliases", {})
+    return {str(name): [str(alias) for alias in aliases] for name, aliases in raw.items()}

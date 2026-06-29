@@ -4,12 +4,11 @@ from PIL import Image
 from clothes_changer.ml.segmentor import CLOTHES_CATEGORIES, PERSON_CATEGORIES
 from clothes_changer.utils.image import (
     blend_images_with_enhancements,
+    clip_bbox,
     get_bounding_box,
-    inpaint_mask_from_clothes,
     mask_overlay,
     prepare_instance_masks,
     resize_max,
-    separate_instances,
 )
 
 
@@ -24,14 +23,18 @@ def test_resize_max():
     assert max(out.size) == 1024
 
 
-def test_bounding_box_and_instances():
+def test_bounding_box_and_prepare_instances():
     person = np.zeros((50, 50), dtype=np.uint8)
     clothes = np.zeros((50, 50), dtype=np.uint8)
     person[10:30, 10:30] = 1
     clothes[15:25, 15:25] = 1
     bbox = get_bounding_box(person | clothes)
     assert bbox[0] == 10
-    instances = separate_instances(person, clothes)
+    instances = prepare_instance_masks(
+        person,
+        clothes,
+        np.array([[0, 0, 50, 50]], dtype=np.float32),
+    )
     assert len(instances) == 1
 
 
@@ -47,17 +50,10 @@ def test_prepare_instance_masks_per_bbox():
 
 
 def test_clip_bbox_when_mask_wider_than_image():
-    from clothes_changer.utils.image import crop_square, pad_bbox
-
     bbox = (100, 400, 400, 700)
-    clipped = pad_bbox(bbox, (576, 384))
+    clipped = clip_bbox(bbox, (576, 384))
     assert clipped[1] < clipped[3]
     assert clipped[0] < clipped[2]
-
-    img = Image.new("RGB", (384, 576))
-    mask = np.zeros((576, 384), dtype=np.uint8)
-    mask[100:400, 50:350] = 1
-    crop_square(img, mask, clipped)
 
 
 def test_align_masks_resizes():
@@ -113,18 +109,12 @@ def test_composite_crop_onto_respects_alpha():
     assert out.getpixel((15, 15)) == (255, 0, 0)
 
 
-def test_inpaint_mask_from_clothes_expands_edges():
-    clothes = np.zeros((80, 80), dtype=np.uint8)
-    clothes[20:60, 20:60] = 1
-
-    expanded = inpaint_mask_from_clothes(clothes)
-
-    assert expanded.sum() > clothes.sum()
-    assert expanded[19, 40] == 1
-
-
 def test_generation_skips_instances_without_clothes(monkeypatch):
+    from clothes_changer.config import get_settings
     from clothes_changer.ml.pipeline import GenerationPipeline
+
+    monkeypatch.setenv("CLOTHES_CHANGER_PIPELINE_DEBUG", "false")
+    get_settings.cache_clear()
 
     source = Image.new("RGB", (200, 200), color=(20, 20, 20))
     person = np.zeros((200, 200), dtype=np.uint8)
@@ -178,7 +168,11 @@ def test_generation_skips_instances_without_clothes(monkeypatch):
 
 
 def test_generation_preserves_source_size(monkeypatch):
+    from clothes_changer.config import get_settings
     from clothes_changer.ml.pipeline import GenerationPipeline
+
+    monkeypatch.setenv("CLOTHES_CHANGER_PIPELINE_DEBUG", "false")
+    get_settings.cache_clear()
 
     source = Image.new("RGB", (1400, 900), color=(20, 20, 20))
     person = np.zeros((900, 1400), dtype=np.uint8)

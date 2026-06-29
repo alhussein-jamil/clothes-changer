@@ -11,6 +11,11 @@ import argon2
 from argon2 import PasswordHasher
 
 from clothes_changer.config import get_settings
+from clothes_changer.constants import (
+    DEFAULT_NEW_USER_CREDITS,
+    HISTORY_DB_LIMIT,
+    MIN_PASSWORD_LENGTH,
+)
 from clothes_changer.schemas import UserOut
 
 logger = logging.getLogger(__name__)
@@ -50,12 +55,12 @@ class Database:
     def _init_schema(self) -> None:
         with _conn() as conn:
             conn.executescript(
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT UNIQUE NOT NULL,
                     password_hash TEXT NOT NULL,
-                    credits INTEGER DEFAULT 10,
+                    credits INTEGER DEFAULT {DEFAULT_NEW_USER_CREDITS},
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     is_active INTEGER DEFAULT 1,
                     is_admin INTEGER DEFAULT 0
@@ -76,8 +81,8 @@ class Database:
     def register_user(
         self, username: str, password: str, credits: int = 0, is_admin: bool = False
     ) -> bool:
-        if len(password) < 5:
-            raise DatabaseError("Password must be at least 5 characters")
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise DatabaseError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
         try:
             with _conn() as conn:
                 conn.execute(
@@ -183,13 +188,13 @@ class Database:
     def get_history(self, username: str) -> list[dict]:
         with _conn() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT i.id, i.filename, i.prompt, i.created_at
                 FROM images i
                 JOIN users u ON u.id = i.user_id
                 WHERE u.username = ?
                 ORDER BY i.created_at DESC
-                LIMIT 50
+                LIMIT {HISTORY_DB_LIMIT}
                 """,
                 (username,),
             ).fetchall()
