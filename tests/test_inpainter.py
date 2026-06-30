@@ -40,6 +40,52 @@ def test_list_local_models_from_env(monkeypatch):
     assert engine.default_model_id() == "outfit_inpaint_v1.safetensors"
 
 
+def test_is_preparing_false_by_default():
+    engine = InpaintEngine()
+    assert not engine.is_preparing()
+
+
+def test_start_background_preload_skips_without_cuda(monkeypatch):
+    engine = InpaintEngine()
+    monkeypatch.setattr(engine, "device", type("D", (), {"type": "cpu"})())
+    engine.start_background_preload()
+    assert not engine.is_preparing()
+    assert engine._preload_state == "ready"
+
+
+def test_background_preload_cancellation(monkeypatch):
+    engine = InpaintEngine()
+    monkeypatch.setattr(engine, "device", type("D", (), {"type": "cuda"})())
+
+    def cancel_during_load(*_args, **_kwargs):
+        engine.request_abort()
+        engine.checkpoint()
+
+    monkeypatch.setattr(engine, "load", cancel_during_load)
+    monkeypatch.setattr(engine, "warmup", lambda: None)
+    engine.start_background_preload()
+    engine._preload_thread.join(timeout=2)
+    assert engine._preload_state == "idle"
+    assert not engine.is_preparing()
+
+
+def test_is_compile_runtime_error():
+    assert InpaintEngine._is_compile_runtime_error(AssertionError())
+    assert InpaintEngine._is_compile_runtime_error(
+        RuntimeError("Error: accessing tensor output of CUDAGraphs")
+    )
+    assert not InpaintEngine._is_compile_runtime_error(ValueError("bad prompt"))
+
+
+def test_decompile_pipe_restores_orig_mod():
+    class Wrapped:
+        _orig_mod = object()
+
+    pipe = type("Pipe", (), {"unet": Wrapped(), "controlnet": Wrapped()})()
+    assert InpaintEngine._decompile_pipe(pipe) is True
+    assert pipe.unet is Wrapped._orig_mod
+
+
 def test_inpaint_keeps_existing_loaded_pipeline(monkeypatch):
     engine = InpaintEngine()
     image = Image.new("RGB", (16, 16))

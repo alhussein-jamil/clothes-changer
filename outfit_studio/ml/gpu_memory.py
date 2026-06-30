@@ -10,12 +10,14 @@ from contextlib import contextmanager
 
 import torch
 
+from outfit_studio.config import PROJECT_ROOT
 from outfit_studio.constants import (
     BYTES_PER_GB,
     BYTES_PER_MIB,
     VRAM_INPAINT_CONTROLNET_GB,
     VRAM_INPAINT_PLAIN_GB,
     VRAM_INPAINT_SDXL_GB,
+    VRAM_POSE_PEAK_GB,
     VRAM_SEGMENTATION_PEAK_GB,
 )
 from outfit_studio.ml.checkpoints import is_sdxl_model_name
@@ -34,13 +36,21 @@ def model_load_lock():
 
 
 def configure_pytorch_memory() -> None:
-    """Apply allocator settings before the first CUDA allocation."""
+    """Apply allocator and compile-cache settings before the first CUDA allocation."""
     global _CONFIGURED
     if _CONFIGURED:
         return
     _CONFIGURED = True
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    logger.info("PyTorch CUDA allocator configured (expandable_segments=True)")
+    inductor_dir = os.environ.get("OUTFIT_STUDIO_INDUCTOR_CACHE_DIR")
+    if not inductor_dir:
+        inductor_dir = str(PROJECT_ROOT / ".cache" / "torchinductor")
+    os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", inductor_dir)
+    os.environ.setdefault("TORCHINDUCTOR_FX_GRAPH_CACHE", "1")
+    logger.info(
+        "PyTorch CUDA allocator configured (expandable_segments=True, inductor_cache=%s)",
+        inductor_dir,
+    )
 
 
 def free_cuda_cache() -> None:
@@ -78,6 +88,55 @@ def _inpaint_vram_budget_gb() -> float:
     return VRAM_INPAINT_CONTROLNET_GB if settings.use_controlnet else VRAM_INPAINT_PLAIN_GB
 
 
+def _combined_ml_vram_gb() -> float:
+    """Peak VRAM when segmentation, pose ONNX, and inpaint may all be resident."""
+    return VRAM_SEGMENTATION_PEAK_GB + VRAM_POSE_PEAK_GB + _inpaint_vram_budget_gb()
+
+
+def both_stacks_fit_on_gpu() -> bool:
+    """True when total VRAM can hold segmentation, pose, and inpaint together."""
+    if not torch.cuda.is_available():
+        return False
+    _, total_gb = gpu_memory_gb()
+    return total_gb >= _combined_ml_vram_gb()
+
+
+def segmentation_uses_cuda() -> bool:
+    return not prefer_cpu_for_segmentation()
+
+
+def prepare_for_segmentation() -> None:
+    """Free inpaint VRAM only when GPU segmentation cannot run alongside it."""
+    if not segmentation_uses_cuda():
+        return
+    from outfit_studio.ml.inpainter import get_inpaint_engine
+
+    engine = get_inpaint_engine()
+    if not engine.is_loaded():
+        return
+    if both_stacks_fit_on_gpu() and gpu_free_gb() >= VRAM_SEGMENTATION_PEAK_GB:
+        return
+    release_inpaint_gpu()
+
+
+def prepare_for_inpaint() -> None:
+    """Free segmentation VRAM only when inpaint must load and space is tight."""
+    if not segmentation_uses_cuda():
+        return
+    from outfit_studio.ml.inpainter import get_inpaint_engine
+    from outfit_studio.ml.segmentor import get_segmentor
+
+    engine = get_inpaint_engine()
+    if engine.is_loaded():
+        return
+    segmentor = get_segmentor()
+    if not segmentor.is_loaded():
+        return
+    if both_stacks_fit_on_gpu() and gpu_free_gb() >= _inpaint_vram_budget_gb():
+        return
+    release_segmentation_gpu()
+
+
 def prefer_cpu_for_segmentation() -> bool:
     """Keep SegFormer/U2NET on CPU only when the card cannot fit seg + inpaint.
 
@@ -90,8 +149,7 @@ def prefer_cpu_for_segmentation() -> bool:
         return True
 
     free_gb, total_gb = gpu_memory_gb()
-    inpaint_gb = _inpaint_vram_budget_gb()
-    combined_gb = VRAM_SEGMENTATION_PEAK_GB + inpaint_gb
+    combined_gb = _combined_ml_vram_gb()
     use_cpu = total_gb < combined_gb
 
     logger.debug(
@@ -100,7 +158,7 @@ def prefer_cpu_for_segmentation() -> bool:
         free_gb,
         total_gb,
         combined_gb,
-        inpaint_gb,
+        _inpaint_vram_budget_gb(),
     )
     return use_cpu
 

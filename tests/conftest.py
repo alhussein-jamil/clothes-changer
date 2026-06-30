@@ -18,11 +18,20 @@ os.environ["OUTFIT_STUDIO_MODELS_DIR"] = str(Path(_tmp) / "models")
 
 def _reset_caches() -> None:
     from outfit_studio.config import get_settings
+    from outfit_studio.content_config import clear_content_config_cache
 
     get_settings.cache_clear()
+    clear_content_config_cache()
 
 
 _reset_caches()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_config_caches():
+    _reset_caches()
+    yield
+    _reset_caches()
 
 
 @pytest.fixture

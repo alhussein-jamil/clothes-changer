@@ -41,3 +41,7 @@ models:
 #   detection_threshold: 0.5
 #   keypoint_threshold: 0.3
 #   mode: balanced
+
+# hands:
+#   protect: true   # exclude detected hands from clothing inpaint mask
+#   padding_ratio: 0.35

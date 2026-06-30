@@ -61,6 +61,7 @@ def download_default_inpaint_checkpoint(models_dir: Path | None = None) -> Path 
     if is_hub_model_id(model_id):
         logger.info("Caching Hugging Face inpaint model: %s", model_id)
         engine.load(model_id)
+        engine.warmup()
         return None
     path = models_dir / model_id
     if inpaint_checkpoint_valid(path):

@@ -56,6 +56,9 @@ class ClothesSegmentor:
             self._processor = None
             free_cuda_cache()
 
+    def is_loaded(self) -> bool:
+        return self._model is not None and self._u2net is not None
+
     def _load(self) -> None:
         with self._lock:
             if self._model is not None and self._u2net is not None:
@@ -117,9 +120,6 @@ class ClothesSegmentor:
 
         w, h = image.size
         logger.debug("segment_clothes %dx%d", w, h)
-
-        if torch.cuda.is_available():
-            free_cuda_cache()
 
         with log_duration(logger, "U2NET mask"):
             with torch.amp.autocast("cuda", enabled=self.device == "cuda"):
@@ -191,9 +191,6 @@ class ClothesSegmentor:
             debug.metadata["person_pixels"] = int(person_np.sum())
             debug.metadata["clothes_pixels"] = int(clothes_np.sum())
             debug.save_meta()
-
-        if torch.cuda.is_available():
-            free_cuda_cache()
 
         return person_mask_cpu, combined_clothes_mask_cpu
 

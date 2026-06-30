@@ -15,7 +15,6 @@ from PIL import Image
 from outfit_studio.config import get_settings
 from outfit_studio.constants import (
     INPAINT_STRENGTH,
-    LATENT_ALIGN,
     MASK_ON,
     MIN_INSTANCE_CLOTHES_PIXELS,
     MIN_POSE_IMAGE_SIDE,
@@ -24,17 +23,18 @@ from outfit_studio.constants import (
     PersonProgress,
 )
 from outfit_studio.content_config import get_default_negative_prompt, get_default_prompt
-from outfit_studio.ml.gpu_memory import free_cuda_cache, release_segmentation_gpu
+from outfit_studio.ml.gpu_memory import free_cuda_cache, prepare_for_inpaint
 from outfit_studio.ml.inpainter import get_inpaint_engine
 from outfit_studio.ml.pipeline_debug import PipelineDebugSession
-from outfit_studio.ml.pose import get_pose_estimator
+from outfit_studio.ml.pose import ensure_pose_on_gpu, get_pose_estimator
 from outfit_studio.ml.segmentation import run_segmentation
+from outfit_studio.operation_control import check_cancelled
+from outfit_studio.utils.hand_mask import build_combined_hand_mask, subtract_hand_mask
 from outfit_studio.utils.image import (
     align_masks,
     apply_reflection_padding,
     blend_images_with_enhancements,
     composite_crop_onto,
-    get_bounding_box,
     get_crop_info,
     prepare_instance_masks,
     remove_reflection_padding,
@@ -82,6 +82,7 @@ class GenerationPipeline:
         generator: torch.Generator,
         model: str | None,
         use_controlnet: bool,
+        hand_protect: bool | None = None,
         progress: ProgressCallback | None = None,
         progress_span: tuple[float, float] = (0.0, 1.0),
         person_index: int = 1,
@@ -104,7 +105,7 @@ class GenerationPipeline:
 
         crop_info = get_crop_info(combined_mask)
         logger.debug(
-            "Instance crop box (%d,%d)-(%d,%d) infer_size target from mask",
+            "Instance crop box (%d,%d)-(%d,%d)",
             crop_info["left"],
             crop_info["top"],
             crop_info["right"],
@@ -140,33 +141,58 @@ class GenerationPipeline:
 
         pose_est = get_pose_estimator()
         control_image = None
-        if use_controlnet:
+        pose_keypoints = None
+        pose_scores = None
+        protect_hands = self.settings.hand_protect if hand_protect is None else hand_protect
+        need_pose = use_controlnet or protect_hands
+        if (
+            need_pose
+            and cnet_image.width >= MIN_POSE_IMAGE_SIDE
+            and cnet_image.height >= MIN_POSE_IMAGE_SIDE
+        ):
             sub(PersonProgress.POSE_DETECT, "Detecting pose")
-            if cnet_image.width >= MIN_POSE_IMAGE_SIDE and cnet_image.height >= MIN_POSE_IMAGE_SIDE:
-                bboxes = pose_est.get_bboxes(cnet_image)
-                logger.debug("Pose bboxes for crop: %d", len(bboxes))
+            bboxes = pose_est.get_bboxes(cnet_image)
+            logger.debug("Pose bboxes for crop: %d", len(bboxes))
+            pose_keypoints, pose_scores = pose_est.estimate_keypoints(cnet_image, bboxes=bboxes)
+            if use_controlnet:
                 sub(PersonProgress.POSE_GUIDE, "Building ControlNet guide")
                 control_image = pose_est.estimate(cnet_image, bboxes=bboxes)
-            else:
-                logger.warning(
-                    "Skipping ControlNet pose for degenerate crop %dx%d",
-                    cnet_image.width,
-                    cnet_image.height,
-                )
-                sub(PersonProgress.PREP_AREA, "Preparing inpaint area (no pose)")
+        elif need_pose:
+            logger.warning(
+                "Skipping pose for degenerate crop %dx%d",
+                cnet_image.width,
+                cnet_image.height,
+            )
+            sub(PersonProgress.PREP_AREA, "Preparing inpaint area (no pose)")
         else:
             sub(PersonProgress.PREP_AREA, "Preparing inpaint area")
 
-        top, left, bottom, right = get_bounding_box(np.array(binary_mask) > 0)
+        if protect_hands and pose_keypoints is not None and pose_scores is not None:
+            hand_mask = build_combined_hand_mask(
+                pose_keypoints,
+                pose_scores,
+                (cnet_image.height, cnet_image.width),
+                kpt_thr=self.settings.pose_keypoint_threshold,
+                padding_ratio=self.settings.hand_padding_ratio,
+            )
+            if hand_mask.any():
+                clothes_np = subtract_hand_mask(np.array(binary_mask), hand_mask)
+                binary_mask = Image.fromarray((clothes_np * MASK_ON).astype(np.uint8))
+                cnet_image = padded_image.copy()
+                cnet_image.paste(0, (0, 0), binary_mask)
+                cnet_image = cnet_image.convert("RGB")
+                logger.info(
+                    "Hand-protect removed %d px from clothes inpaint mask",
+                    int(hand_mask.sum() // 255),
+                )
+                if debug is not None:
+                    prefix = f"person_{person_index:02d}"
+                    debug.save_mask(f"{prefix}/02b_hand_protect.png", hand_mask > 0)
+                    debug.save_mask(f"{prefix}/02c_clothes_mask_protected.png", clothes_np > 0)
+
         engine = get_inpaint_engine()
-        sub(PersonProgress.LOAD_MODEL, "Loading model")
-        engine.load(model, use_controlnet)
-        infer_size = max(
-            min(max(right - left, bottom - top), self.settings.inference_size)
-            // LATENT_ALIGN
-            * LATENT_ALIGN,
-            self.settings.min_inference_size,
-        )
+        sub(PersonProgress.LOAD_MODEL, "Preparing inpaint")
+        infer_size = self.settings.compile_inpaint_size
         resolved_model = model or get_inpaint_engine().default_model_id()
         logger.info(
             "Inpainting crop %dx%d at %dx%d (model=%s, controlnet=%s)",
@@ -218,8 +244,6 @@ class GenerationPipeline:
                 guidance_scale=guidance_scale,
                 generator=generator,
                 control_image=control_image,
-                width=infer_size,
-                height=infer_size,
                 strength=INPAINT_STRENGTH,
                 on_step=on_diffusion_step,
             )
@@ -258,12 +282,18 @@ class GenerationPipeline:
         seed: int | None = None,
         model: str | None = None,
         use_controlnet: bool | None = None,
+        hand_protect: bool | None = None,
         username: str = "guest",
         progress: ProgressCallback | None = None,
         debug_session_dir: str | None = None,
     ) -> tuple[Image.Image, str]:
         report = progress or _noop_progress
-        report(GenerateProgress.PREP_START, "Preparing image and masks")
+
+        def report_checked(fraction: float, desc: str) -> None:
+            check_cancelled()
+            report(fraction, desc)
+
+        report_checked(GenerateProgress.PREP_START, "Preparing image and masks")
         logger.info(
             "Generate started (user=%s, model=%s, steps=%s, cfg=%s, controlnet=%s)",
             username,
@@ -272,8 +302,6 @@ class GenerationPipeline:
             guidance_scale,
             use_controlnet,
         )
-        release_segmentation_gpu()
-        free_cuda_cache()
 
         image = image.convert("RGB")
         w, h = image.size
@@ -281,7 +309,7 @@ class GenerationPipeline:
 
         if person_mask is None or clothes_mask is None:
             logger.info("No editor masks — running full segmentation")
-            report(GenerateProgress.SEGMENT, "Running clothes segmentation")
+            report_checked(GenerateProgress.SEGMENT, "Running clothes segmentation")
             person_mask, clothes_mask, _ = run_segmentation(
                 image,
                 settings=self.settings,
@@ -298,6 +326,7 @@ class GenerationPipeline:
         use_controlnet = (
             use_controlnet if use_controlnet is not None else self.settings.use_controlnet
         )
+        protect_hands = self.settings.hand_protect if hand_protect is None else hand_protect
         seed = seed if seed is not None else random.randint(0, SEED_MAX)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -319,13 +348,16 @@ class GenerationPipeline:
                     "inference_steps": steps,
                     "guidance_scale": guidance_scale,
                     "use_controlnet": use_controlnet,
+                    "hand_protect": protect_hands,
                     "prompt": prompt,
                     "negative_prompt": negative_prompt,
                 }
             )
 
         pose_est = get_pose_estimator()
-        report(GenerateProgress.DETECT_PEOPLE, "Detecting people")
+        report_checked(GenerateProgress.DETECT_PEOPLE, "Detecting people")
+        if protect_hands or use_controlnet:
+            pose_est = ensure_pose_on_gpu()
         bboxes = pose_est.get_bboxes(image)
         instances = prepare_instance_masks(person_mask, clothes_mask, bboxes)
         if debug is not None:
@@ -342,7 +374,8 @@ class GenerationPipeline:
         if not active:
             active = instances
 
-        report(GenerateProgress.PREP_END, "Loading inpainting model")
+        report_checked(GenerateProgress.PREP_END, "Loading inpainting model")
+        prepare_for_inpaint()
         get_inpaint_engine().load(model, use_controlnet)
         if debug is not None:
             engine = get_inpaint_engine()
@@ -381,7 +414,8 @@ class GenerationPipeline:
                 generator,
                 model,
                 use_controlnet,
-                progress=report,
+                hand_protect=protect_hands,
+                progress=report_checked,
                 progress_span=(span_start, span_end),
                 person_index=idx,
                 person_total=len(active),
@@ -403,7 +437,7 @@ class GenerationPipeline:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        report(GenerateProgress.SAVE, "Saving result")
+        report_checked(GenerateProgress.SAVE, "Saving result")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{username}_{ts}.png"
         out_path = self.settings.resolved_output_dir / filename
@@ -415,7 +449,7 @@ class GenerationPipeline:
             debug.metadata["output_file"] = filename
             debug.save_meta()
             logger.info("Pipeline debug artifacts → %s", active_dir or debug.root)
-        report(1.0, "Complete")
+        report_checked(1.0, "Complete")
         return full_image, filename, active_dir
 
 

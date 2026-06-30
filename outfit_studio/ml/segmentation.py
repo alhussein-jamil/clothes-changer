@@ -8,9 +8,10 @@ import numpy as np
 from PIL import Image
 
 from outfit_studio.config import Settings, get_settings
-from outfit_studio.ml.gpu_memory import release_inpaint_gpu, release_segmentation_gpu
+from outfit_studio.ml.gpu_memory import prepare_for_segmentation
 from outfit_studio.ml.pipeline_debug import PipelineDebugSession
 from outfit_studio.ml.segmentor import get_segmentor
+from outfit_studio.operation_control import check_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,8 @@ def run_segmentation(
         )
         seg_debug.save_image("00_source.png", image)
 
-    release_inpaint_gpu()
+    prepare_for_segmentation()
+    check_cancelled()
     logger.info(
         "segment: running segmentor on %dx%d image (user=%r)",
         image.width,
@@ -51,7 +53,7 @@ def run_segmentation(
         username,
     )
     person, clothes = get_segmentor().segment(image, debug=seg_debug)
-    release_segmentation_gpu()
+    check_cancelled()
     logger.info(
         "segment: done — person_pixels=%d clothes_pixels=%d",
         int(person.sum()),

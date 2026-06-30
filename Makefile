@@ -13,14 +13,16 @@ NVIDIA_CUDA12_LIBS := \
 install:
 	$(UV) venv --python 3.10 $(VENV)
 	$(UV) pip install -e ".[dev]" --python $(PYTHON)
-	@echo ">> Run 'make install-fast' for CUDA torch, ONNX GPU, and model downloads"
+	@if [ "$$(uname -s)" = "Linux" ]; then \
+		$(UV) pip uninstall onnxruntime -y --python $(PYTHON) 2>/dev/null || true; \
+		$(UV) pip install --reinstall onnxruntime-gpu $(NVIDIA_CUDA12_LIBS) --python $(PYTHON); \
+	fi
+	@echo ">> Run 'make install-fast' for CUDA torch and model downloads"
 
 install-fast: install
-	@echo ">> Installing PyTorch (CUDA 13) + ONNX Runtime GPU (CUDA 12) + NVIDIA libs"
+	@echo ">> Installing PyTorch (CUDA 13)"
 	$(UV) pip install torch torchvision --index-url $(TORCH_INDEX) --python $(PYTHON)
 	-$(UV) pip install xformers --index-url $(TORCH_INDEX) --no-deps --python $(PYTHON)
-	-$(UV) pip uninstall onnxruntime -y --python $(PYTHON)
-	$(UV) pip install onnxruntime-gpu $(NVIDIA_CUDA12_LIBS) gdown --python $(PYTHON)
 	$(MAKE) download-models
 
 download-models:

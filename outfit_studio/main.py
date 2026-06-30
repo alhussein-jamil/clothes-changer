@@ -27,6 +27,9 @@ def main() -> None:
     vram = f"{gpu_free_gb():.1f}/{gpu_total_gb():.1f} GB free" if cuda else "n/a"
     if cuda:
         ensure_nvidia_cuda_libs()
+        from outfit_studio.ml.pose import ensure_pose_on_gpu
+
+        ensure_pose_on_gpu()
     onnx_dev = resolve_onnx_device() if cuda else "cpu"
 
     log_banner(
@@ -44,7 +47,8 @@ def main() -> None:
     if cuda:
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
-        logger.info("CUDA optimizations enabled (cudnn.benchmark, tf32)")
+        torch.set_float32_matmul_precision("high")
+        logger.info("CUDA optimizations enabled (cudnn.benchmark, tf32, matmul precision=high)")
     else:
         logger.warning("CUDA not available — running on CPU (slow)")
 

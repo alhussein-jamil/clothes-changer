@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 import requests
 import torch
@@ -29,8 +31,7 @@ from outfit_studio.constants import (
     HTTP_DOWNLOAD_CHUNK_BYTES,
     HTTP_DOWNLOAD_TIMEOUT_S,
     HTTP_USER_AGENT,
-    LATENT_ALIGN,
-    MIN_LATENT_SIDE,
+    MASK_ON,
 )
 from outfit_studio.content_config import (
     get_checkpoint_urls,
@@ -42,12 +43,15 @@ from outfit_studio.ml.checkpoints import (
     inpaint_checkpoint_valid,
     is_hub_model_id,
 )
+from outfit_studio.ml.compile_cache import load_artifacts, save_artifacts
 from outfit_studio.ml.gpu_memory import free_cuda_cache, model_load_lock
+from outfit_studio.operation_control import OperationCancelled, check_cancelled
 from outfit_studio.utils.logging import log_duration
 
 logger = logging.getLogger(__name__)
 
 StepProgressCallback = Callable[[int, int], None]
+PreloadState = Literal["idle", "running", "ready", "failed"]
 
 
 class InpaintEngine:
@@ -59,9 +63,79 @@ class InpaintEngine:
         self._current_model: str | None = None
         self._use_controlnet = False
         self._architecture: str = "sd15"
+        self._warmed_up = False
+        self._preload_state: PreloadState = "idle"
+        self._preload_error: str | None = None
+        self._preload_lock = threading.Lock()
+        self._preload_thread: threading.Thread | None = None
+        self._work_abort = threading.Event()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
         logger.info("InpaintEngine ready (device=%s, dtype=%s)", self.device, self.dtype)
+
+    def is_preparing(self) -> bool:
+        """True while a background load/compile warmup is in progress."""
+        with self._preload_lock:
+            return self._preload_state == "running"
+
+    def request_abort(self) -> None:
+        """Signal load/compile/warmup to stop at the next checkpoint."""
+        self._work_abort.set()
+
+    def clear_work_abort(self) -> None:
+        self._work_abort.clear()
+
+    def checkpoint(self) -> None:
+        """Raise OperationCancelled when Stop was requested."""
+        if self._work_abort.is_set():
+            raise OperationCancelled
+        check_cancelled()
+
+    def start_background_preload(
+        self,
+        model_id: str | None = None,
+        use_controlnet: bool | None = None,
+    ) -> None:
+        """Load and warm up the inpaint pipeline on a background thread."""
+        with self._preload_lock:
+            if self._preload_state in ("running", "ready"):
+                return
+            if self.device.type != "cuda":
+                self._preload_state = "ready"
+                return
+            self._preload_state = "running"
+            self._preload_error = None
+
+        def worker() -> None:
+            self.clear_work_abort()
+            try:
+                logger.info("Background inpaint preload started")
+                self.load(model_id, use_controlnet)
+                self.warmup()
+                with self._preload_lock:
+                    self._preload_state = "ready"
+                logger.info("Background inpaint preload finished")
+            except OperationCancelled:
+                logger.info("Background inpaint preload cancelled")
+                self.unload()
+                with self._preload_lock:
+                    self._preload_state = "idle"
+            except Exception as exc:
+                logger.exception("Background inpaint preload failed")
+                with self._preload_lock:
+                    self._preload_state = "failed"
+                    self._preload_error = str(exc)
+            finally:
+                self.clear_work_abort()
+
+        thread = threading.Thread(
+            target=worker,
+            name="inpaint-preload",
+            daemon=True,
+        )
+        with self._preload_lock:
+            self._preload_thread = thread
+        thread.start()
 
     def _discover_local_models(self) -> list[str]:
         models_dir = self.settings.resolved_models_dir
@@ -221,7 +295,11 @@ class InpaintEngine:
             logger.info("Unloading inpaint pipeline (model=%s)", self._current_model)
             del self._pipe
             self._pipe = None
+            self._warmed_up = False
             free_cuda_cache()
+
+    def is_loaded(self) -> bool:
+        return self._pipe is not None
 
     def load(self, model_id: str | None = None, use_controlnet: bool | None = None) -> None:
         model_id = model_id or self.default_model_id()
@@ -242,6 +320,7 @@ class InpaintEngine:
             logger.debug("Reusing loaded inpaint pipeline (%s)", model_id)
             return
 
+        self.checkpoint()
         self.unload()
         model_path = self._resolve_model_path(model_id)
         logger.info(
@@ -271,13 +350,21 @@ class InpaintEngine:
                             self.settings.controlnet_model,
                             torch_dtype=self.dtype,
                         )
-                        self._pipe = StableDiffusionControlNetInpaintPipeline.from_single_file(
-                            model_path,
-                            controlnet=controlnet,
-                            torch_dtype=self.dtype,
-                            use_safetensors=model_path.endswith(".safetensors"),
-                            safety_checker=None,
-                        )
+                        if is_hub_model_id(model_path):
+                            self._pipe = StableDiffusionControlNetInpaintPipeline.from_pretrained(
+                                model_path,
+                                controlnet=controlnet,
+                                torch_dtype=self.dtype,
+                                safety_checker=None,
+                            )
+                        else:
+                            self._pipe = StableDiffusionControlNetInpaintPipeline.from_single_file(
+                                model_path,
+                                controlnet=controlnet,
+                                torch_dtype=self.dtype,
+                                use_safetensors=model_path.endswith(".safetensors"),
+                                safety_checker=None,
+                            )
                     elif model_path.endswith((".safetensors", ".ckpt")):
                         self._pipe = StableDiffusionInpaintPipeline.from_single_file(
                             model_path,
@@ -294,17 +381,32 @@ class InpaintEngine:
                 finally:
                     enable_progress_bars()
 
+                self.checkpoint()
                 assert self._pipe is not None
                 if hasattr(self._pipe, "safety_checker"):
                     self._pipe.safety_checker = None
                 if hasattr(self._pipe, "set_progress_bar_config"):
                     self._pipe.set_progress_bar_config(disable=True)
-                self._pipe.scheduler = DPMSolverMultistepScheduler(
+                # Deterministic DPM++ is faster per step than SDE and works well with fewer steps.
+                self._pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+                    self._pipe.scheduler.config,
                     use_karras_sigmas=True,
-                    algorithm_type="sde-dpmsolver++",
+                    algorithm_type="dpmsolver++",
                 )
                 self._pipe = self._pipe.to(self.device)
                 self._enable_fast_attention(self._pipe)
+                if (
+                    self.device.type == "cuda"
+                    and self.settings.torch_compile
+                    and self.settings.torch_compile_cache
+                ):
+                    load_artifacts(
+                        self.settings.resolved_torch_compile_cache_dir,
+                        model_id,
+                        arch,
+                        use_controlnet,
+                    )
+                self._optimize_for_inference(self._pipe)
 
         self._current_model = model_id
         self._use_controlnet = use_controlnet
@@ -344,6 +446,112 @@ class InpaintEngine:
         except Exception as e:
             logger.warning("Fast attention not available: %s", e)
 
+    def _optimize_for_inference(self, pipe) -> None:
+        """Apply layout and compile optimizations that speed up steady-state inference."""
+        if self.device.type != "cuda":
+            return
+
+        self.checkpoint()
+        for name, module in (
+            ("unet", getattr(pipe, "unet", None)),
+            ("controlnet", getattr(pipe, "controlnet", None)),
+            ("vae", getattr(pipe, "vae", None)),
+        ):
+            if module is None:
+                continue
+            try:
+                module.to(memory_format=torch.channels_last)
+                logger.debug("%s: channels_last layout enabled", name)
+            except Exception as exc:
+                logger.debug("%s: channels_last skipped (%s)", name, exc)
+
+        if not self.settings.torch_compile:
+            logger.info("torch.compile disabled (OUTFIT_STUDIO_TORCH_COMPILE=false)")
+            return
+
+        self.checkpoint()
+        # ControlNet + reduce-overhead/cudagraphs triggers inductor assertion failures
+        # in diffusers pipelines; compile the UNet only with the safer default mode.
+        unet = getattr(pipe, "unet", None)
+        if unet is None:
+            return
+        try:
+            import torch._inductor.config as inductor_config
+
+            inductor_config.triton.cudagraph_trees = False
+        except Exception:
+            pass
+        try:
+            pipe.unet = torch.compile(unet, mode="default", dynamic=False)
+            logger.info("torch.compile enabled for unet (mode=default, dynamic=False)")
+        except Exception as exc:
+            logger.warning("torch.compile failed for unet: %s", exc)
+        self.checkpoint()
+
+    @staticmethod
+    def _decompile_pipe(pipe) -> bool:
+        """Restore eager modules if torch.compile wrappers are present."""
+        changed = False
+        for name in ("unet", "controlnet"):
+            module = getattr(pipe, name, None)
+            if module is not None and hasattr(module, "_orig_mod"):
+                setattr(pipe, name, module._orig_mod)
+                changed = True
+        return changed
+
+    @staticmethod
+    def _is_compile_runtime_error(exc: BaseException) -> bool:
+        text = f"{type(exc).__name__}: {exc}".lower()
+        markers = ("cudagraph", "assertionerror", "inductor", "dynamo")
+        return any(marker in text for marker in markers)
+
+    def warmup(self) -> None:
+        """Run a tiny inpaint so CUDA kernels and compile graphs are ready."""
+        if self._pipe is None or self.device.type != "cuda" or self._warmed_up:
+            return
+
+        self.checkpoint()
+        size = self.settings.compile_inpaint_size
+        dummy = Image.new("RGB", (size, size), color=(128, 128, 128))
+        mask = Image.new("L", (size, size), color=0)
+        # Small central mask — enough to exercise the inpaint path without meaningful compute.
+        mask.paste(MASK_ON, (size // 4, size // 4, 3 * size // 4, 3 * size // 4))
+
+        logger.info("Warming up inpaint pipeline (%dx%d, 1 step) …", size, size)
+        control_image = None
+        if self._use_controlnet:
+            control_image = Image.new("RGB", (size, size), color=(0, 0, 0))
+        try:
+            with log_duration(logger, "inpaint warmup"):
+                self.inpaint(
+                    dummy,
+                    mask,
+                    prompt="photo",
+                    negative_prompt="blur",
+                    steps=1,
+                    control_image=control_image,
+                )
+        except OperationCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Inpaint warmup skipped (%s)", exc)
+            return
+        self.checkpoint()
+        self._warmed_up = True
+        if (
+            self.settings.torch_compile
+            and self.settings.torch_compile_cache
+            and self._current_model is not None
+        ):
+            save_artifacts(
+                self.settings.resolved_torch_compile_cache_dir,
+                self._current_model,
+                self._architecture,
+                self._use_controlnet,
+            )
+        free_cuda_cache()
+        logger.info("Inpaint pipeline warm")
+
     def inpaint(
         self,
         image: Image.Image,
@@ -354,8 +562,6 @@ class InpaintEngine:
         guidance_scale: float | None = None,
         generator: torch.Generator | None = None,
         control_image: Image.Image | None = None,
-        width: int | None = None,
-        height: int | None = None,
         strength: float = 1.0,
         on_step: StepProgressCallback | None = None,
     ) -> Image.Image:
@@ -369,17 +575,16 @@ class InpaintEngine:
         prompt, negative_prompt = self._truncate_prompts(prompt, negative_prompt)
 
         orig_w, orig_h = image.size
-        infer_w = width or max(MIN_LATENT_SIDE, (orig_w // LATENT_ALIGN) * LATENT_ALIGN)
-        infer_h = height or max(MIN_LATENT_SIDE, (orig_h // LATENT_ALIGN) * LATENT_ALIGN)
+        infer_size = self.settings.compile_inpaint_size
         logger.info(
             "Inpaint %dx%d → %dx%d | steps=%d cfg=%.1f controlnet=%s",
             orig_w,
             orig_h,
-            infer_w,
-            infer_h,
+            infer_size,
+            infer_size,
             steps,
             guidance_scale,
-            self._use_controlnet and control_image is not None,
+            self._use_controlnet,
         )
 
         kwargs: dict = {
@@ -390,12 +595,14 @@ class InpaintEngine:
             "num_inference_steps": steps,
             "guidance_scale": guidance_scale,
             "generator": generator,
-            "width": infer_w,
-            "height": infer_h,
+            "width": infer_size,
+            "height": infer_size,
             "strength": strength,
         }
 
-        if self._use_controlnet and control_image is not None:
+        if self._use_controlnet:
+            if control_image is None:
+                control_image = Image.new("RGB", image.size, color=(0, 0, 0))
             kwargs["control_image"] = control_image
 
         if on_step is not None:
@@ -416,7 +623,16 @@ class InpaintEngine:
                 enabled=self.device.type == "cuda",
             ),
         ):
-            result = self._pipe(**kwargs).images[0]
+            try:
+                result = self._pipe(**kwargs).images[0]
+            except (AssertionError, RuntimeError) as exc:
+                if not self._is_compile_runtime_error(exc) or not self._decompile_pipe(self._pipe):
+                    raise
+                logger.warning(
+                    "torch.compile inference failed (%s) — retrying with eager UNet",
+                    exc,
+                )
+                result = self._pipe(**kwargs).images[0]
 
         if result.size != (orig_w, orig_h):
             result = result.resize((orig_w, orig_h), Image.Resampling.LANCZOS)

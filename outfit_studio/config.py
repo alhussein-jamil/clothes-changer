@@ -52,6 +52,9 @@ class Settings(BaseSettings):
 
     pipeline_debug: bool = False
     pipeline_debug_dir: Path = Path("debug-pipeline")
+    torch_compile: bool = True
+    torch_compile_cache: bool = True
+    torch_compile_cache_dir: Path = Path(".cache/torch_compile")
 
     # --- ML / content (from YAML; env vars intentionally not supported) ---
 
@@ -88,6 +91,14 @@ class Settings(BaseSettings):
         return content_config.get_pose_mode()
 
     @property
+    def hand_protect(self) -> bool:
+        return content_config.get_hand_protect()
+
+    @property
+    def hand_padding_ratio(self) -> float:
+        return content_config.get_hand_padding_ratio()
+
+    @property
     def inpaint_steps(self) -> int:
         return content_config.get_inpaint_steps()
 
@@ -100,8 +111,12 @@ class Settings(BaseSettings):
         return content_config.get_inference_size()
 
     @property
-    def min_inference_size(self) -> int:
-        return content_config.get_min_inference_size()
+    def compile_inpaint_size(self) -> int:
+        """Fixed square size for every inpaint pass (keeps torch.compile graphs stable)."""
+        from outfit_studio.constants import LATENT_ALIGN, MIN_LATENT_SIDE
+
+        aligned = self.inference_size // LATENT_ALIGN * LATENT_ALIGN
+        return max(aligned, MIN_LATENT_SIDE)
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -154,6 +169,10 @@ class Settings(BaseSettings):
     @property
     def resolved_pipeline_debug_dir(self) -> Path:
         return self._resolve(self.pipeline_debug_dir)
+
+    @property
+    def resolved_torch_compile_cache_dir(self) -> Path:
+        return self._resolve(self.torch_compile_cache_dir)
 
     def ensure_dirs(self) -> None:
         for label, path in (

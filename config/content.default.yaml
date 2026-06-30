@@ -23,9 +23,12 @@ generation:
   steps: 50
   guidance_scale: 6.5
   inference_size: 512
-  min_inference_size: 256
 
 pose:
   detection_threshold: 0.5
   keypoint_threshold: 0.3
   mode: balanced
+
+hands:
+  protect: true
+  padding_ratio: 0.35

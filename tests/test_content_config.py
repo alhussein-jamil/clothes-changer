@@ -75,7 +75,6 @@ def test_ml_defaults_from_yaml(tmp_path, monkeypatch):
         "  steps: 30\n"
         "  guidance_scale: 7.0\n"
         "  inference_size: 640\n"
-        "  min_inference_size: 320\n"
         "pose:\n"
         "  detection_threshold: 0.4\n"
         "  keypoint_threshold: 0.2\n"
@@ -95,7 +94,6 @@ def test_ml_defaults_from_yaml(tmp_path, monkeypatch):
         get_guidance_scale,
         get_inference_size,
         get_inpaint_steps,
-        get_min_inference_size,
         get_pose_keypoint_threshold,
         get_pose_mode,
         get_segformer_model,
@@ -110,7 +108,10 @@ def test_ml_defaults_from_yaml(tmp_path, monkeypatch):
     assert get_inpaint_steps() == 30
     assert get_guidance_scale() == 7.0
     assert get_inference_size() == 640
-    assert get_min_inference_size() == 320
+    from outfit_studio.config import get_settings
+
+    get_settings.cache_clear()
+    assert get_settings().compile_inpaint_size == 640
     assert get_detection_threshold() == 0.4
     assert get_pose_keypoint_threshold() == 0.2
     assert get_pose_mode() == "performance"

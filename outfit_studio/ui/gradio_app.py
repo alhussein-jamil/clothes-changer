@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import logging
 import random
+import time
 from pathlib import Path
 from typing import NamedTuple
 
@@ -29,12 +30,20 @@ from outfit_studio.content_config import (
     get_app_name,
     get_default_negative_prompt,
     get_default_prompt,
+    get_hand_protect,
     get_tagline,
 )
 from outfit_studio.db.database import Database
 from outfit_studio.ml.inpainter import get_inpaint_engine
 from outfit_studio.ml.pipeline import get_pipeline
 from outfit_studio.ml.segmentation import run_segmentation
+from outfit_studio.operation_control import (
+    OperationCancelled,
+    begin_operation,
+    bind_request,
+    request_stop,
+    session_hash_from,
+)
 from outfit_studio.ui.editor_session import (
     EditorSession,
     UploadSegmentAction,
@@ -142,6 +151,65 @@ class GradioApp:
         editor_value = apply_masks_to_editor(seg_image, person, clothes, editor=editor, clean=clean)
         return SegmentationResult(editor_value, pipeline_clean, person, clothes, active_dir)
 
+    def _try_run_segmentation(
+        self,
+        *,
+        label: str,
+        editor: dict | None,
+        clean: Image.Image,
+        username: str | None = None,
+        debug_session_dir: str | None = None,
+    ) -> SegmentationResult | None:
+        try:
+            return self._run_segmentation(
+                editor,
+                clean=clean,
+                username=username,
+                debug_session_dir=debug_session_dir,
+            )
+        except OperationCancelled:
+            logger.info("%s: cancelled", label)
+            return None
+
+    @staticmethod
+    def _editor_skip(
+        clean_source: Image.Image | None,
+        segment_key: str | None,
+        suppress_hook: bool,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
+        return gr.skip(), clean_source, segment_key, suppress_hook, debug_session_dir
+
+    @staticmethod
+    def _segment_state_skip(
+        clean_source: Image.Image | None,
+        segment_key: str | None,
+        suppress_hook: bool,
+        debug_session_dir: str | None,
+    ) -> tuple[None, Image.Image | None, str | None, bool, str | None]:
+        """Session fields when segmentation is skipped; editor is applied in a later step."""
+        return None, clean_source, segment_key, suppress_hook, debug_session_dir
+
+    @staticmethod
+    def _segment_state_result(
+        editor_value: dict,
+        clean: Image.Image,
+        key: str,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image, str, bool, str | None]:
+        """Session fields after segmentation; suppress is set before the editor is pushed."""
+        return editor_value, clean, key, True, debug_session_dir
+
+    @staticmethod
+    def _apply_pending_editor(pending: dict | None) -> dict:
+        if pending is None:
+            return gr.skip()
+        return gr.update(value=pending)
+
+    @staticmethod
+    def _clear_pending_editor(_pending: dict | None) -> None:
+        return None
+
     def _resolve_clean_image(
         self,
         editor: dict | None,
@@ -201,6 +269,7 @@ class GradioApp:
         debug_session_dir: str | None,
     ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Segment on upload and push masks straight into the ImageEditor."""
+        bind_request(request)
         username = self._session_username(request) or self.settings.default_admin
         debug_session_dir = self._effective_debug_dir(request, debug_session_dir)
         session = EditorSession.from_fields(
@@ -210,42 +279,44 @@ class GradioApp:
 
         if action is UploadSegmentAction.SKIP_NO_BACKGROUND:
             logger.warning("prepare_upload_segment: no editor background yet")
-            return gr.skip(), clean_source, segment_key, False, debug_session_dir
+            return self._segment_state_skip(clean_source, segment_key, False, debug_session_dir)
 
         if action is UploadSegmentAction.SKIP_PROGRAMMATIC:
             logger.info("prepare_upload_segment: skipped — programmatic update")
-            return gr.skip(), clean_source, segment_key, False, debug_session_dir
+            return self._segment_state_skip(clean_source, segment_key, True, debug_session_dir)
 
         if action is UploadSegmentAction.SKIP_MASKS_PRESENT:
             logger.info("prepare_upload_segment: skipped — masks already on editor")
-            return gr.skip(), clean or clean_source, key, False, debug_session_dir
+            return self._segment_state_skip(clean or clean_source, key, True, debug_session_dir)
 
         logger.info(
             "prepare_upload_segment: running segmentation on %sx%s image",
             clean.width,
             clean.height,
         )
-        result = self._run_segmentation(
-            editor,
+        result = self._try_run_segmentation(
+            label="prepare_upload_segment",
+            editor=editor,
             clean=clean,
             username=username,
             debug_session_dir=debug_session_dir,
         )
+        if result is None:
+            return self._segment_state_skip(clean_source, segment_key, False, debug_session_dir)
         if not masks_have_pixels(result.person, result.clothes):
             logger.warning("prepare_upload_segment: empty segment output for %s", key)
-            return (
-                gr.skip(),
+            return self._segment_state_skip(
                 clean_source or result.pipeline_clean,
                 key,
                 False,
                 result.debug_session_dir,
             )
 
-        return (
-            gr.update(value=result.editor_value),
-            *EditorSession().fields_after_segmentation(
-                result.pipeline_clean, key, result.debug_session_dir
-            ),
+        return self._segment_state_result(
+            result.editor_value,
+            result.pipeline_clean,
+            key,
+            result.debug_session_dir,
         )
 
     def sync_clean_source(
@@ -436,7 +507,7 @@ class GradioApp:
         editor: dict | None = None,
         username: str | None = None,
         debug_session_dir: str | None = None,
-    ) -> tuple[dict, Image.Image, str, bool, str | None]:
+    ) -> tuple[dict, Image.Image, str, bool, str | None] | None:
         """Segment a file-backed or gallery image; suppress the follow-up upload hook."""
         if editor is None or load_editor_clean_image(editor) is None:
             editor = {
@@ -444,38 +515,21 @@ class GradioApp:
                 "layers": [],
                 "composite": None,
             }
-        result = self._run_segmentation(
-            editor,
+        result = self._try_run_segmentation(
+            label="segment_loaded_image",
+            editor=editor,
             clean=image,
             username=username,
             debug_session_dir=debug_session_dir,
         )
+        if result is None:
+            return None
         key = (
             background_key_from_path(source_path)
             if source_path
             else background_key_from_image(result.pipeline_clean)
         )
         return result.editor_value, result.pipeline_clean, key, True, result.debug_session_dir
-
-    def resegment_prepare(
-        self,
-        editor: dict | None,
-        clean_source: Image.Image | None,
-        last_key: str | None,
-        request: gr.Request,
-        debug_session_dir: str | None,
-    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
-        """Clear mask layers before re-segmenting (Gradio appends layers otherwise)."""
-        logger.info("resegment: clearing existing mask layers")
-        debug_session_dir = self._effective_debug_dir(request, debug_session_dir)
-        clean = self._resolve_clean_image(editor, clean_source, last_key)
-        if clean is None:
-            raise gr.Error("Load an image first, then click Redo Clothes Segmentation.")
-        reset = editor_mask_reset(editor, clean)
-        session = EditorSession.from_fields(clean_source, last_key, debug_session_dir, False)
-        return gr.update(value=reset), *session.fields_after_programmatic_push(
-            clean, last_key, debug_session_dir
-        )
 
     def resegment(
         self,
@@ -486,21 +540,32 @@ class GradioApp:
         debug_session_dir: str | None,
     ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Force re-segmentation (Redo button) — replaces mask layer, never stacks."""
+        bind_request(request)
         logger.info("resegment: replacing existing mask layer")
         debug_session_dir = self._effective_debug_dir(request, debug_session_dir)
         username = self._session_username(request) or self.settings.default_admin
         clean = clean_source or self._resolve_clean_image(editor, None, last_key)
         if clean is None:
             raise gr.Error("Load an image first, then click Redo Clothes Segmentation.")
-        result = self._run_segmentation(
-            editor,
+        # Reset layers in-memory only. Pushing a cleared editor to the client first
+        # triggers input_image.upload, which races with this handler and can leave
+        # the canvas mask-free when the upload hook returns gr.skip().
+        reset_editor = editor_mask_reset(editor, clean)
+        result = self._try_run_segmentation(
+            label="resegment",
+            editor=reset_editor,
             clean=clean,
             username=username,
             debug_session_dir=debug_session_dir,
         )
+        if result is None:
+            return self._segment_state_skip(clean_source, last_key, False, debug_session_dir)
         key = background_key_from_image(result.pipeline_clean) if clean is not None else last_key
-        return self._editor_update(
-            result.editor_value, result.pipeline_clean, key, result.debug_session_dir
+        return self._segment_state_result(
+            result.editor_value,
+            result.pipeline_clean,
+            key,
+            result.debug_session_dir,
         )
 
     def segment_after_example(
@@ -510,18 +575,22 @@ class GradioApp:
         debug_session_dir: str | None,
     ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Segment after gr.Examples loads into the editor (canvas already fitted)."""
+        bind_request(request)
         logger.info("segment_after_example: called")
         debug_session_dir = self._effective_debug_dir(request, debug_session_dir)
         username = self._session_username(request) or self.settings.default_admin
         clean = self._resolve_clean_image(editor, None, None)
         if clean is None:
             return gr.update(), None, None, True, debug_session_dir
-        result = self._run_segmentation(
-            editor,
+        result = self._try_run_segmentation(
+            label="segment_after_example",
+            editor=editor,
             clean=clean,
             username=username,
             debug_session_dir=debug_session_dir,
         )
+        if result is None:
+            return self._editor_skip(None, None, True, debug_session_dir)
         key = background_key_from_image(result.pipeline_clean)
         return self._editor_update(
             result.editor_value, result.pipeline_clean, key, result.debug_session_dir
@@ -542,6 +611,7 @@ class GradioApp:
         debug_session_dir: str | None,
     ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
         """Segment after gr.Examples has populated the ImageEditor."""
+        bind_request(request)
         logger.info("load_example_after_select: index=%s", index)
         debug_session_dir = self._effective_debug_dir(request, debug_session_dir)
         username = self._session_username(request) or self.settings.default_admin
@@ -551,13 +621,16 @@ class GradioApp:
         if path:
             image = self._open_image(path)
             if image is not None:
-                value, clean, key, _, new_debug_dir = self._segment_loaded_image(
+                loaded = self._segment_loaded_image(
                     image,
                     source_path=path,
                     editor=editor,
                     username=username,
                     debug_session_dir=debug_session_dir,
                 )
+                if loaded is None:
+                    return self._editor_skip(None, None, True, debug_session_dir)
+                value, clean, key, _, new_debug_dir = loaded
                 return self._editor_update(value, clean, key, new_debug_dir)
         return self.segment_after_example(editor, request, debug_session_dir)
 
@@ -567,17 +640,21 @@ class GradioApp:
         request: gr.Request,
         debug_session_dir: str | None,
     ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
+        bind_request(request)
         if not slider_val:
             return gr.update(), None, None, False, debug_session_dir
         debug_session_dir = self._effective_debug_dir(request, debug_session_dir)
         username = self._session_username(request) or self.settings.default_admin
         _, after = slider_val
         clean = after.convert("RGB")
-        value, clean, key, _, new_debug_dir = self._segment_loaded_image(
+        loaded = self._segment_loaded_image(
             clean,
             username=username,
             debug_session_dir=debug_session_dir,
         )
+        if loaded is None:
+            return self._editor_skip(None, None, False, debug_session_dir)
+        value, clean, key, _, new_debug_dir = loaded
         return self._editor_update(value, clean, key, new_debug_dir)
 
     def generate(
@@ -589,6 +666,7 @@ class GradioApp:
         negative_prompt: str,
         model_id: str,
         use_controlnet: bool,
+        hand_protect: bool,
         steps: int,
         guidance_scale: float,
         seed: int,
@@ -598,6 +676,7 @@ class GradioApp:
         request: gr.Request,
         progress: gr.Progress = gr.Progress(),
     ) -> tuple[tuple[Image.Image, Image.Image] | None, int, str | None]:
+        bind_request(request)
         username = self._session_username(request)
         user = self.db.get_user(username) if username else None
         is_admin = bool(user and user.is_admin)
@@ -608,6 +687,7 @@ class GradioApp:
             user_prompt_addon=user_prompt_addon,
             model_id=model_id,
             use_controlnet=use_controlnet,
+            hand_protect=hand_protect,
             steps=steps,
             guidance_scale=guidance_scale,
             seed=seed,
@@ -617,17 +697,19 @@ class GradioApp:
         resolved_negative = str(params["negative_prompt"])
         model_id = str(params["model_id"])
         use_controlnet = bool(params["use_controlnet"])
+        hand_protect = bool(params["hand_protect"])
         steps = int(params["steps"])
         guidance_scale = float(params["guidance_scale"])
         actual_seed = int(params["seed"])
 
         logger.info(
-            "generate: user=%r admin=%s steps=%d cfg=%.1f controlnet=%s seed=%d",
+            "generate: user=%r admin=%s steps=%d cfg=%.1f controlnet=%s hand_protect=%s seed=%d",
             username,
             is_admin,
             steps,
             guidance_scale,
             use_controlnet,
+            hand_protect,
             actual_seed,
         )
         if not username:
@@ -639,6 +721,12 @@ class GradioApp:
 
         if not is_admin:
             debug_session_dir = None
+
+        engine = get_inpaint_engine()
+        while engine.is_preparing():
+            engine.checkpoint()
+            progress(0, desc="Loading and compiling model…")
+            time.sleep(0.25)
 
         progress(0, desc="Preparing generation")
 
@@ -657,27 +745,27 @@ class GradioApp:
                 person_mask, clothes_mask, source.height, source.width
             )
 
-        if (
-            person_mask is None
-            or clothes_mask is None
-            or (person_mask.sum() == 0 and clothes_mask.sum() == 0)
-        ):
-            logger.info("generate: masks empty — running on-the-fly segmentation")
-            progress(GenerateProgress.PREP_START, desc="Running clothes segmentation")
-            person_mask, clothes_mask, active_dir = run_segmentation(
-                source,
-                settings=self.settings,
-                username=username,
-                debug_session_dir=debug_session_dir,
-            )
-            debug_session_dir = active_dir
-
-        logger.info("generate: resolved seed=%d", actual_seed)
-
-        def report_progress(fraction: float, desc: str) -> None:
-            progress(fraction, desc=desc)
-
         try:
+            if (
+                person_mask is None
+                or clothes_mask is None
+                or (person_mask.sum() == 0 and clothes_mask.sum() == 0)
+            ):
+                logger.info("generate: masks empty — running on-the-fly segmentation")
+                progress(GenerateProgress.PREP_START, desc="Running clothes segmentation")
+                person_mask, clothes_mask, active_dir = run_segmentation(
+                    source,
+                    settings=self.settings,
+                    username=username,
+                    debug_session_dir=debug_session_dir,
+                )
+                debug_session_dir = active_dir
+
+            logger.info("generate: resolved seed=%d", actual_seed)
+
+            def report_progress(fraction: float, desc: str) -> None:
+                progress(fraction, desc=desc)
+
             result, filename, active_debug_dir = self.pipeline.generate(
                 image=source,
                 person_mask=person_mask,
@@ -689,13 +777,18 @@ class GradioApp:
                 seed=actual_seed,
                 model=model_id,
                 use_controlnet=use_controlnet,
+                hand_protect=hand_protect,
                 username=username,
                 progress=report_progress,
                 debug_session_dir=debug_session_dir,
             )
+        except OperationCancelled:
+            logger.info("generate: cancelled")
+            return gr.update(), seed, debug_session_dir
         except Exception as e:
             logger.exception("Generation failed")
-            raise gr.Error(str(e)) from e
+            message = str(e).strip() or type(e).__name__
+            raise gr.Error(message) from e
 
         if not is_admin:
             self.db.deduct_credit(username)
@@ -764,6 +857,7 @@ class GradioApp:
         user_prompt_addon: str,
         model_id: str,
         use_controlnet: bool,
+        hand_protect: bool,
         steps: int,
         guidance_scale: float,
         seed: int,
@@ -779,6 +873,7 @@ class GradioApp:
                 "negative_prompt": (negative_prompt or "").strip(),
                 "model_id": model_id if model_id in self.model_ids else self.default_model,
                 "use_controlnet": use_controlnet,
+                "hand_protect": hand_protect,
                 "steps": int(steps),
                 "guidance_scale": float(guidance_scale),
                 "seed": random.randint(0, SEED_MAX) if random_seed else int(seed),
@@ -792,6 +887,7 @@ class GradioApp:
             "negative_prompt": get_default_negative_prompt().strip(),
             "model_id": self.default_model,
             "use_controlnet": self.settings.use_controlnet,
+            "hand_protect": self.settings.hand_protect,
             "steps": self.settings.inpaint_steps,
             "guidance_scale": self.settings.guidance_scale,
             "seed": random.randint(0, SEED_MAX),
@@ -853,6 +949,31 @@ class GradioApp:
         """Periodic / on-load refresh for the history gallery."""
         return self.history_images(request)
 
+    @staticmethod
+    def _action_button_updates(*, busy: bool) -> tuple[dict, dict, dict]:
+        return (
+            gr.update(interactive=not busy),
+            gr.update(interactive=busy),
+            gr.update(interactive=not busy),
+        )
+
+    def _refresh_action_buttons(self, *, busy: bool | None = None) -> tuple[dict, dict, dict]:
+        if busy is None:
+            busy = get_inpaint_engine().is_preparing()
+        return self._action_button_updates(busy=busy)
+
+    def _begin_operation(self, request: gr.Request) -> tuple[dict, dict, dict]:
+        begin_operation(session_hash_from(request))
+        get_inpaint_engine().clear_work_abort()
+        return self._action_button_updates(busy=True)
+
+    def _end_operation(self) -> tuple[dict, dict, dict]:
+        return self._refresh_action_buttons()
+
+    def _request_stop(self, request: gr.Request) -> None:
+        request_stop(session_hash_from(request))
+        get_inpaint_engine().request_abort()
+
     def create_ui(self) -> gr.Blocks:
         with gr.Blocks(
             css=CUSTOM_CSS,
@@ -889,6 +1010,7 @@ class GradioApp:
                             clean_source = gr.State(value=None)
                             segment_key = gr.State(value=None)
                             suppress_upload_hook = gr.State(value=False)
+                            pending_editor = gr.State(value=None)
                             debug_session_dir = gr.State(value=None)
                             debug_status = gr.Markdown(visible=False)
 
@@ -898,7 +1020,12 @@ class GradioApp:
                                 interactive=False,
                             )
                             use_as_input = gr.Button("Use as Input", visible=False, size="sm")
-                            generate_btn = gr.Button("Generate", variant="primary", size="lg")
+                            with gr.Row():
+                                stop_btn = gr.Button(
+                                    "Stop", variant="stop", size="lg", interactive=False
+                                )
+                                generate_btn = gr.Button("Generate", variant="primary", size="lg")
+                            action_buttons = [generate_btn, stop_btn, resegment_btn]
                             if self.examples:
                                 examples = gr.Examples(
                                     examples=self.examples,
@@ -930,6 +1057,12 @@ class GradioApp:
                                 value=self.settings.use_controlnet,
                             )
                             reload_btn = gr.Button("↻ Models")
+                        with gr.Row():
+                            hand_protect = gr.Checkbox(
+                                label="Hand protect",
+                                value=get_hand_protect(),
+                                info="Exclude detected hands from the clothing inpaint mask",
+                            )
                         prompt = gr.Textbox(
                             label="Prompt",
                             lines=UI.PROMPT_LINES,
@@ -1001,15 +1134,24 @@ class GradioApp:
                 [admin_settings, advanced_settings, user_prompt_addon, debug_status],
             )
             demo.load(self.history_gallery_value, None, history_gallery)
+            demo.load(self._refresh_action_buttons, None, action_buttons)
+            preload_timer = gr.Timer(value=1, active=True)
+            preload_timer.tick(self._refresh_action_buttons, None, action_buttons)
             main_tabs.select(self._load_history_on_tab, None, history_gallery)
 
             history_refresh.click(self.history_images, None, history_gallery)
+
+            stop_btn.click(self._request_stop, None, None)
 
             input_image.upload(
                 self.sync_clean_source,
                 inputs=[input_image, clean_source, segment_key],
                 outputs=clean_source,
             ).success(
+                self._begin_operation,
+                None,
+                action_buttons,
+            ).then(
                 self.prepare_upload_segment,
                 inputs=[
                     input_image,
@@ -1019,12 +1161,24 @@ class GradioApp:
                     debug_session_dir,
                 ],
                 outputs=[
-                    input_image,
+                    pending_editor,
                     clean_source,
                     segment_key,
                     suppress_upload_hook,
                     debug_session_dir,
                 ],
+            ).then(
+                self._apply_pending_editor,
+                pending_editor,
+                input_image,
+            ).then(
+                self._clear_pending_editor,
+                pending_editor,
+                pending_editor,
+            ).then(
+                self._end_operation,
+                None,
+                action_buttons,
             )
             input_image.clear(
                 self.clear_editor_state,
@@ -1032,29 +1186,35 @@ class GradioApp:
                 [clean_source, segment_key, suppress_upload_hook, debug_session_dir],
             )
             resegment_btn.click(
-                self.resegment_prepare,
-                [input_image, clean_source, segment_key, debug_session_dir],
-                [
-                    input_image,
-                    clean_source,
-                    segment_key,
-                    suppress_upload_hook,
-                    debug_session_dir,
-                ],
+                self._begin_operation,
+                None,
+                action_buttons,
             ).then(
                 self.resegment,
                 [input_image, clean_source, segment_key, debug_session_dir],
                 [
-                    input_image,
+                    pending_editor,
                     clean_source,
                     segment_key,
                     suppress_upload_hook,
                     debug_session_dir,
                 ],
             ).then(
+                self._apply_pending_editor,
+                pending_editor,
+                input_image,
+            ).then(
+                self._clear_pending_editor,
+                pending_editor,
+                pending_editor,
+            ).then(
                 self._debug_status_update,
                 debug_session_dir,
                 debug_status,
+            ).then(
+                self._end_operation,
+                None,
+                action_buttons,
             )
 
             def reload_models() -> gr.Dropdown:
@@ -1073,6 +1233,10 @@ class GradioApp:
             )
 
             generate_btn.click(
+                self._begin_operation,
+                None,
+                action_buttons,
+            ).then(
                 lambda: gr.update(value=None),
                 None,
                 result,
@@ -1086,6 +1250,7 @@ class GradioApp:
                     negative_prompt,
                     model_dropdown,
                     use_controlnet,
+                    hand_protect,
                     steps,
                     guidance,
                     seed,
@@ -1100,12 +1265,24 @@ class GradioApp:
                 debug_status,
             ).then(lambda: gr.update(visible=True), None, use_as_input).then(
                 self._credits_label, None, credits_info
-            ).then(self.history_images, None, history_gallery)
+            ).then(self.history_images, None, history_gallery).then(
+                self._end_operation,
+                None,
+                action_buttons,
+            )
 
             use_as_input.click(
+                self._begin_operation,
+                None,
+                action_buttons,
+            ).then(
                 self.use_result_as_input,
                 [result, debug_session_dir],
                 [input_image, clean_source, segment_key, suppress_upload_hook, debug_session_dir],
+            ).then(
+                self._end_operation,
+                None,
+                action_buttons,
             )
 
             if examples is not None:
@@ -1113,6 +1290,10 @@ class GradioApp:
                     self._store_example_index,
                     None,
                     example_index,
+                ).then(
+                    self._begin_operation,
+                    None,
+                    action_buttons,
                 ).then(
                     self.load_example_after_select,
                     inputs=[input_image, example_index, debug_session_dir],
@@ -1127,6 +1308,10 @@ class GradioApp:
                     self._debug_status_update,
                     debug_session_dir,
                     debug_status,
+                ).then(
+                    self._end_operation,
+                    None,
+                    action_buttons,
                 )
 
         return demo
@@ -1191,4 +1376,5 @@ class GradioApp:
         }
         if self.settings.require_auth:
             launch_kwargs["auth"] = self.authenticate
+        get_inpaint_engine().start_background_preload()
         demo.launch(**launch_kwargs)

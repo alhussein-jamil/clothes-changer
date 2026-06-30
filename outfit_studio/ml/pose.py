@@ -91,12 +91,12 @@ class PoseEstimator:
         logger.debug("Detected %d person(s)", len(bboxes))
         return np.asarray(bboxes, dtype=np.float32)
 
-    def estimate(
+    def estimate_keypoints(
         self,
         image: Image.Image,
         bboxes: np.ndarray | None = None,
-    ) -> Image.Image:
-        """OpenPose skeleton on black background for ControlNet conditioning."""
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Whole-body OpenPose keypoints and per-joint confidence scores."""
         self._load()
         assert self._pose is not None
         img = np.array(image.convert("RGB"))
@@ -111,6 +111,18 @@ class PoseEstimator:
         with torch.inference_mode():
             keypoints, scores = self._pose(img, bboxes=bboxes)
 
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return np.asarray(keypoints), np.asarray(scores)
+
+    def estimate(
+        self,
+        image: Image.Image,
+        bboxes: np.ndarray | None = None,
+    ) -> Image.Image:
+        """OpenPose skeleton on black background for ControlNet conditioning."""
+        img = np.array(image.convert("RGB"))
+        keypoints, scores = self.estimate_keypoints(image, bboxes=bboxes)
         canvas = np.zeros_like(img)
         pose_arr = draw_skeleton(
             canvas,
@@ -119,8 +131,6 @@ class PoseEstimator:
             openpose_skeleton=True,
             kpt_thr=self.settings.pose_keypoint_threshold,
         )
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
         logger.debug("Pose skeleton rendered %dx%d", pose_arr.shape[1], pose_arr.shape[0])
         return Image.fromarray(pose_arr)
 
@@ -128,3 +138,19 @@ class PoseEstimator:
 @lru_cache
 def get_pose_estimator() -> PoseEstimator:
     return PoseEstimator()
+
+
+def ensure_pose_on_gpu() -> PoseEstimator:
+    """Reload pose ONNX sessions when CUDA becomes available after first import."""
+    from outfit_studio.ml.onnx_runtime import ensure_nvidia_cuda_libs, resolve_onnx_device
+
+    if torch.cuda.is_available():
+        ensure_nvidia_cuda_libs()
+    target = resolve_onnx_device()
+    est = get_pose_estimator()
+    if est.device == target:
+        return est
+    logger.info("Reloading pose estimator (%s → %s)", est.device, target)
+    est.unload()
+    get_pose_estimator.cache_clear()
+    return get_pose_estimator()

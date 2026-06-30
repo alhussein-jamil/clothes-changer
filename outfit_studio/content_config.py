@@ -67,6 +67,10 @@ def _pose() -> dict[str, Any]:
     return _section("pose")
 
 
+def _hands() -> dict[str, Any]:
+    return _section("hands")
+
+
 def get_app_name() -> str:
     return str(get_content_config().get("app", {}).get("name", "Outfit Studio"))
 
@@ -115,10 +119,6 @@ def get_inference_size() -> int:
     return int(_generation().get("inference_size", 512))
 
 
-def get_min_inference_size() -> int:
-    return int(_generation().get("min_inference_size", 256))
-
-
 def get_detection_threshold() -> float:
     return float(_pose().get("detection_threshold", 0.5))
 
@@ -129,6 +129,14 @@ def get_pose_keypoint_threshold() -> float:
 
 def get_pose_mode() -> str:
     return str(_pose().get("mode", "balanced"))
+
+
+def get_hand_protect() -> bool:
+    return bool(_hands().get("protect", True))
+
+
+def get_hand_padding_ratio() -> float:
+    return float(_hands().get("padding_ratio", 0.35))
 
 
 def get_checkpoint_urls() -> dict[str, str]:

@@ -179,6 +179,10 @@ def test_generation_skips_instances_without_clothes(monkeypatch):
             )
 
         @staticmethod
+        def estimate_keypoints(image):
+            return np.zeros((1, 134, 2), dtype=np.float32), np.zeros((1, 134), dtype=np.float32)
+
+        @staticmethod
         def unload():
             pass
 
@@ -191,7 +195,7 @@ def test_generation_skips_instances_without_clothes(monkeypatch):
             "bottom": 100,
         }
 
-    monkeypatch.setattr("outfit_studio.ml.pipeline.release_segmentation_gpu", lambda: None)
+    monkeypatch.setattr("outfit_studio.ml.pipeline.prepare_for_inpaint", lambda: None)
     monkeypatch.setattr("outfit_studio.ml.pipeline.free_cuda_cache", lambda: None)
     monkeypatch.setattr("outfit_studio.ml.pipeline.get_pose_estimator", lambda: DummyPose())
     monkeypatch.setattr(GenerationPipeline, "_process_single_mask", fake_process)
@@ -231,6 +235,10 @@ def test_generation_preserves_source_size(monkeypatch):
             return np.array([[0, 0, image.width, image.height]], dtype=np.float32)
 
         @staticmethod
+        def estimate_keypoints(image):
+            return np.zeros((1, 134, 2), dtype=np.float32), np.zeros((1, 134), dtype=np.float32)
+
+        @staticmethod
         def unload():
             pass
 
@@ -242,7 +250,7 @@ def test_generation_preserves_source_size(monkeypatch):
             "bottom": 12,
         }
 
-    monkeypatch.setattr("outfit_studio.ml.pipeline.release_segmentation_gpu", lambda: None)
+    monkeypatch.setattr("outfit_studio.ml.pipeline.prepare_for_inpaint", lambda: None)
     monkeypatch.setattr("outfit_studio.ml.pipeline.free_cuda_cache", lambda: None)
     monkeypatch.setattr("outfit_studio.ml.pipeline.get_pose_estimator", lambda: DummyPose())
     monkeypatch.setattr(

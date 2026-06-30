@@ -47,10 +47,11 @@ HTTP_USER_AGENT: Final[str] = "outfit-studio/1.0"
 BYTES_PER_MIB: Final[int] = 1_048_576
 
 # --- VRAM budget estimates (GB) ---
-VRAM_SEGMENTATION_PEAK_GB: Final[float] = 2.0
+VRAM_SEGMENTATION_PEAK_GB: Final[float] = 4.0
 VRAM_INPAINT_SDXL_GB: Final[float] = 10.0
 VRAM_INPAINT_CONTROLNET_GB: Final[float] = 6.0
 VRAM_INPAINT_PLAIN_GB: Final[float] = 4.5
+VRAM_POSE_PEAK_GB: Final[float] = 0.5
 BYTES_PER_GB: Final[int] = 1024**3
 BYTES_PER_KIB: Final[int] = 1024
 

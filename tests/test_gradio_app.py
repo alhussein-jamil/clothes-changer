@@ -1,6 +1,5 @@
 from unittest.mock import patch
 
-import gradio as gr
 import numpy as np
 from PIL import Image
 
@@ -111,17 +110,9 @@ def test_resegment_recovers_from_segment_key(mock_run_segmentation, db, tmp_path
     mock_run_segmentation.return_value = (person, clothes, None)
 
     empty_editor = {"background": None, "layers": [], "composite": None}
-    cleared, clean, out_key, skip_prepare, _ = app.resegment_prepare(
-        empty_editor, None, key, None, None
-    )
-    cleared_value = _editor_value(cleared)
-    assert cleared_value["layers"] == []
-    editor_update, clean, out_key, skip, _ = app.resegment(
-        cleared_value, clean, out_key, None, None
-    )
+    editor_update, clean, out_key, skip, _ = app.resegment(empty_editor, None, key, None, None)
     value = _editor_value(editor_update)
     assert np.array(value["layers"][0])[30, 30, 1] > 50
-    assert skip_prepare is True
     assert skip is True
     assert clean is not None
     assert out_key is not None
@@ -135,7 +126,7 @@ def test_prepare_upload_segment_preserves_clean_source_on_empty_editor(mock_run_
     pending, out_clean, key, skip, _ = app.prepare_upload_segment(
         empty_editor, "path:/tmp/x.png", clean, False, None, None
     )
-    assert pending == gr.skip()
+    assert pending is None
     assert out_clean is clean
     assert key == "path:/tmp/x.png"
     mock_run_segmentation.assert_not_called()
@@ -195,7 +186,7 @@ def test_prepare_upload_segment_retries_after_empty_masks(mock_run_segmentation,
         np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8),
     )
     pending1, clean, key1, _, _ = app.prepare_upload_segment(editor, None, None, False, None, None)
-    assert pending1 == gr.skip()
+    assert pending1 is None
     assert key1 is not None
     assert mock_run_segmentation.call_count == 1
 
@@ -226,15 +217,15 @@ def test_prepare_upload_segment_skips_repeat(mock_run_segmentation, db):
     assert key is not None
     assert skip is True
     assert mock_run_segmentation.call_count == 1
-    assert np.array(_editor_value(pending)["layers"][0]).shape == (32, 32, 4)
+    assert np.array(pending["layers"][0]).shape == (32, 32, 4)
 
     masked_editor = apply_masks_to_editor(bg, person, clothes)
     pending2, _, same_key, skip2, _ = app.prepare_upload_segment(
         masked_editor, key, clean, False, None, None
     )
-    assert pending2 == gr.skip()
+    assert pending2 is None
     assert same_key == key
-    assert skip2 is False
+    assert skip2 is True
     assert mock_run_segmentation.call_count == 1
 
 
@@ -267,7 +258,7 @@ def test_prepare_upload_segment_resegments_when_masks_stale(mock_run_segmentatio
     pending2, _, same_key, _, _ = app.prepare_upload_segment(
         masked_a, key_a, clean, False, None, None
     )
-    assert pending2 == gr.skip()
+    assert pending2 is None
     assert same_key == key_a
     assert mock_run_segmentation.call_count == 1
 
@@ -316,10 +307,10 @@ def test_prepare_upload_segment_skips_programmatic_load(mock_run_segmentation, d
     )
     key = background_key_from_image(bg)
     pending, clean, out_key, skip, _ = app.prepare_upload_segment(editor, key, bg, True, None, None)
-    assert pending == gr.skip()
+    assert pending is None
     assert clean is bg
     assert out_key == key
-    assert skip is False
+    assert skip is True
     mock_run_segmentation.assert_not_called()
 
 
@@ -338,6 +329,7 @@ def test_compose_generation_params_admin(db):
         user_prompt_addon="ignored",
         model_id=app.default_model,
         use_controlnet=False,
+        hand_protect=True,
         steps=40,
         guidance_scale=5.5,
         seed=42,
@@ -347,6 +339,7 @@ def test_compose_generation_params_admin(db):
     assert params["negative_prompt"] == "custom negative"
     assert params["model_id"] == app.default_model
     assert params["use_controlnet"] is False
+    assert params["hand_protect"] is True
     assert params["steps"] == 40
     assert params["seed"] == 42
 
@@ -365,6 +358,7 @@ def test_compose_generation_params_user_addon(mock_neg, mock_pos, db):
         user_prompt_addon="red dress",
         model_id="other-model.safetensors",
         use_controlnet=False,
+        hand_protect=False,
         steps=10,
         guidance_scale=3.0,
         seed=1,
@@ -374,6 +368,7 @@ def test_compose_generation_params_user_addon(mock_neg, mock_pos, db):
     assert params["negative_prompt"] == "base negative"
     assert params["model_id"] == app.default_model
     assert params["use_controlnet"] == app.settings.use_controlnet
+    assert params["hand_protect"] == app.settings.hand_protect
     assert params["steps"] == app.settings.inpaint_steps
 
 
@@ -391,6 +386,7 @@ def test_compose_generation_params_user_without_addon(mock_neg, mock_pos, db):
         user_prompt_addon="",
         model_id="other-model.safetensors",
         use_controlnet=True,
+        hand_protect=True,
         steps=99,
         guidance_scale=9.0,
         seed=7,
@@ -441,7 +437,47 @@ def test_prepare_upload_segment_stale_suppress_same_key_still_skips(mock_run_seg
     _, clean, key, _, _ = app.prepare_upload_segment(editor, None, None, False, None, None)
     masked = apply_masks_to_editor(bg, person, clothes)
     pending, _, same_key, skip, _ = app.prepare_upload_segment(masked, key, clean, True, None, None)
-    assert pending == gr.skip()
+    assert pending is None
     assert same_key == key
-    assert skip is False
+    assert skip is True
     assert mock_run_segmentation.call_count == 1
+
+
+@patch("outfit_studio.ui.gradio_app.get_inpaint_engine")
+@patch("outfit_studio.ui.gradio_app.time.sleep")
+def test_generate_waits_for_preload(mock_sleep, mock_get_engine, db):
+    app = GradioApp(db=db)
+    db.register_user(app.settings.default_admin, "password123", credits=10, is_admin=True)
+    mock_engine = mock_get_engine.return_value
+    mock_engine.is_preparing.side_effect = [True, True, False]
+
+    bg = Image.new("RGB", (64, 64), color=(100, 120, 140))
+    person = np.zeros((64, 64), dtype=np.uint8)
+    clothes = np.zeros((64, 64), dtype=np.uint8)
+    clothes[16:48, 16:48] = 1
+    editor = apply_masks_to_editor(bg, person, clothes)
+
+    with patch.object(app.pipeline, "generate") as mock_generate:
+        mock_generate.return_value = (bg, "out.png", None)
+        app.generate(
+            editor=editor,
+            clean_source=bg,
+            segment_key=None,
+            prompt="test",
+            negative_prompt="bad",
+            model_id=app.default_model,
+            use_controlnet=False,
+            hand_protect=True,
+            steps=24,
+            guidance_scale=6.5,
+            seed=42,
+            random_seed=False,
+            debug_session_dir=None,
+            user_prompt_addon="",
+            request=None,
+            progress=lambda *_args, **_kwargs: None,
+        )
+
+    assert mock_engine.is_preparing.call_count == 3
+    assert mock_sleep.call_count == 2
+    mock_generate.assert_called_once()

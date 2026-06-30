@@ -109,6 +109,10 @@ def resolve_onnx_device() -> str:
         except Exception:
             logger.info(
                 "ONNX Runtime CUDA libraries unavailable; pose/detection will use CPU. "
-                "Run `make install-fast` to install CUDA 12 libs for ORT."
+                "Run `make install-fast` to install CUDA 12 libs for ORT.",
             )
             return "cpu"
+
+
+def clear_onnx_device_cache() -> None:
+    resolve_onnx_device.cache_clear()
