@@ -5,10 +5,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from outfit_studio.constants import (
-    SEGMENTATION_CLOTHES_EDGE_GROW_PX,
-    SEGMENTATION_MIN_COMPONENT_AREA,
-)
+from outfit_studio.content_config import get_content_settings
 from outfit_studio.utils.image import grow_mask
 
 
@@ -30,10 +27,16 @@ def refine_segmentation_masks(
     person_mask: np.ndarray,
     clothes_mask: np.ndarray,
     *,
-    min_component_area: int = SEGMENTATION_MIN_COMPONENT_AREA,
-    clothes_edge_grow_px: int = SEGMENTATION_CLOTHES_EDGE_GROW_PX,
+    min_component_area: int | None = None,
+    clothes_edge_grow_px: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Constrain clothes to the person silhouette, drop speckle, grow edges."""
+    content = get_content_settings()
+    if min_component_area is None:
+        min_component_area = content.min_component_area
+    if clothes_edge_grow_px is None:
+        clothes_edge_grow_px = content.clothes_edge_grow_px
+
     person = (person_mask > 0).astype(np.uint8)
     clothes = (clothes_mask > 0).astype(np.uint8)
 
@@ -43,4 +46,20 @@ def refine_segmentation_masks(
     if clothes_edge_grow_px > 0 and clothes.any():
         clothes = grow_mask(clothes, clothes_edge_grow_px) & person
 
+    return person, clothes
+
+
+def normalize_nested_masks(
+    person_mask: np.ndarray,
+    clothes_mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Refine parser-style masks where clothes lie inside the person silhouette.
+
+    Called from the segmentor only — do not run again in the generation pipeline
+    or clothes edges will be dilated twice.
+    """
+    person = (person_mask > 0).astype(np.uint8)
+    clothes = (clothes_mask > 0).astype(np.uint8)
+    if clothes.any() and (person & clothes).sum() == clothes.sum():
+        return refine_segmentation_masks(person, clothes)
     return person, clothes

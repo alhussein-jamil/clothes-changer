@@ -1,4 +1,4 @@
-"""Shared data models."""
+"""Database row models."""
 
 from datetime import datetime
 

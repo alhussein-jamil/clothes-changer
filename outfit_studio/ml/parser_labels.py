@@ -30,12 +30,15 @@ def masks_from_parser_logits(
     """Build person and clothing masks from parser logits."""
     device = logits.device
     pred_seg = logits.argmax(dim=1)[0]
-    probs = logits.softmax(dim=1)
-
     clothes_idx = _clothes_categories(device)
     person_idx = _person_categories(device)
-    clothes_prob = probs.index_select(1, clothes_idx).sum(dim=1)[0]
-    person_prob = probs.index_select(1, person_idx).sum(dim=1)[0]
+
+    # Group softmax probabilities without materializing a full (C,H,W) tensor.
+    log_denom = torch.logsumexp(logits, dim=1)
+    clothes_log = torch.logsumexp(logits.index_select(1, clothes_idx), dim=1)
+    person_log = torch.logsumexp(logits.index_select(1, person_idx), dim=1)
+    clothes_prob = (clothes_log - log_denom)[0]
+    person_prob = (person_log - log_denom)[0]
 
     person_mask = (pred_seg != 0).float()
     clothes_mask = torch.isin(pred_seg, clothes_idx).float()

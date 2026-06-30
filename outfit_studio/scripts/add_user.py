@@ -1,5 +1,6 @@
-#!/usr/bin/env python3
 """Add a user to the database."""
+
+from __future__ import annotations
 
 import argparse
 import logging
@@ -29,12 +30,16 @@ def main() -> None:
     )
     db = Database()
     try:
-        db.register_user(args.username, args.password, credits=args.credits, is_admin=args.admin)
-        print(f"User '{args.username}' created")
-    except DatabaseError as e:
-        logger.error("Failed to create user: %s", e)
-        print(f"Error: {e}", file=sys.stderr)
+        db.register_user(
+            args.username,
+            args.password,
+            credits=args.credits,
+            is_admin=args.admin,
+        )
+    except DatabaseError as exc:
+        logger.error("%s", exc)
         sys.exit(1)
+    logger.info("User %r created", args.username)
 
 
 if __name__ == "__main__":

@@ -24,15 +24,11 @@ segmentation:
 
 generation:
   use_controlnet: true
-  steps: 40
+  steps: 24
   guidance_scale: 10.0
-  inference_size: 512
+  inference_size: 640
 
 pose:
   detection_threshold: 0.5
   keypoint_threshold: 0.3
   mode: balanced
-
-hands:
-  protect: true
-  padding_ratio: 0.35

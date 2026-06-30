@@ -1,5 +1,8 @@
 # Outfit Studio
 
+> **Note:** This repository directory may be named `clothless-next` locally; the Python
+> package and CLI are **`outfit-studio`** (`outfit_studio/`).
+
 <p align="center">
   <img src="static/outfit-studio-logo.png" alt="Outfit Studio logo" width="160" />
 </p>

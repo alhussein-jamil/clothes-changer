@@ -11,7 +11,7 @@ from outfit_studio.config import Settings, get_settings
 from outfit_studio.ml.gpu_memory import prepare_for_segmentation
 from outfit_studio.ml.pipeline_debug import PipelineDebugSession
 from outfit_studio.ml.segmentor import get_segmentor
-from outfit_studio.operation_control import check_cancelled
+from outfit_studio.ui.operation_control import check_cancelled
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ def run_segmentation(
     Returns ``(person_mask, clothes_mask, active_debug_dir)``.
     """
     settings = settings or get_settings()
+    content = settings.content
     image = image.convert("RGB")
 
     session, active_dir = PipelineDebugSession.open_or_create(settings, username, debug_session_dir)
@@ -37,9 +38,9 @@ def run_segmentation(
         seg_debug.metadata.update(
             {
                 "username": username,
-                "human_parser_model": settings.human_parser_model,
+                "human_parser_model": content.human_parser,
                 "image_size": list(image.size),
-                "clothes_confidence": settings.segmentation_clothes_confidence,
+                "clothes_confidence": content.clothes_confidence,
             }
         )
         seg_debug.save_image("00_source.png", image)

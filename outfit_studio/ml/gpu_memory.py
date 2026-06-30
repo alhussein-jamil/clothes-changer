@@ -10,7 +10,6 @@ from contextlib import contextmanager
 
 import torch
 
-from outfit_studio.config import PROJECT_ROOT
 from outfit_studio.constants import (
     BYTES_PER_GB,
     BYTES_PER_MIB,
@@ -42,9 +41,10 @@ def configure_pytorch_memory() -> None:
         return
     _CONFIGURED = True
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
-    inductor_dir = os.environ.get("OUTFIT_STUDIO_INDUCTOR_CACHE_DIR")
-    if not inductor_dir:
-        inductor_dir = str(PROJECT_ROOT / ".cache" / "torchinductor")
+    from outfit_studio.config import get_settings
+
+    settings = get_settings()
+    inductor_dir = str(settings.resolved_inductor_cache_dir)
     os.environ.setdefault("TORCHINDUCTOR_CACHE_DIR", inductor_dir)
     os.environ.setdefault("TORCHINDUCTOR_FX_GRAPH_CACHE", "1")
     logger.info(
@@ -83,9 +83,9 @@ def _inpaint_vram_budget_gb() -> float:
     from outfit_studio.config import get_settings
 
     settings = get_settings()
-    if is_sdxl_model_name(settings.inpaint_model):
+    if is_sdxl_model_name(settings.content.default_inpaint):
         return VRAM_INPAINT_SDXL_GB
-    return VRAM_INPAINT_CONTROLNET_GB if settings.use_controlnet else VRAM_INPAINT_PLAIN_GB
+    return VRAM_INPAINT_CONTROLNET_GB if settings.content.use_controlnet else VRAM_INPAINT_PLAIN_GB
 
 
 def _combined_ml_vram_gb() -> float:

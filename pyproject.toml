@@ -47,6 +47,7 @@ dev = [
 [project.scripts]
 outfit-studio = "outfit_studio.main:main"
 outfit-studio-download-models = "outfit_studio.scripts.download_models:main"
+outfit-studio-add-user = "outfit_studio.scripts.add_user:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -70,5 +71,4 @@ ignore = ["B008", "SIM117"]
 
 [tool.ruff.lint.per-file-ignores]
 "outfit_studio/main.py" = ["E402"]
-"scripts/*.py" = ["E402"]
 "outfit_studio/auth/routes.py" = ["E501"]

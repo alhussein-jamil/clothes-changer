@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 def download_default_inpaint_checkpoint(models_dir: Path | None = None) -> Path | None:
     """Download or cache the configured default inpaint model."""
     from outfit_studio.ml.checkpoints import is_hub_model_id
-    from outfit_studio.ml.inpainter import InpaintEngine
+    from outfit_studio.ml.inpainter import get_inpaint_engine
 
     settings = get_settings()
     models_dir = models_dir or settings.resolved_models_dir
     models_dir.mkdir(parents=True, exist_ok=True)
-    engine = InpaintEngine()
+    engine = get_inpaint_engine()
     model_id = engine.default_model_id()
     if is_hub_model_id(model_id):
         logger.info("Caching Hugging Face inpaint model: %s", model_id)
@@ -58,7 +58,7 @@ def warmup_human_parser() -> None:
     logger.info("Warming up human parser weights...")
     from transformers import AutoModelForSemanticSegmentation, SegformerImageProcessor
 
-    model_id = get_settings().human_parser_model
+    model_id = get_settings().content.human_parser
     SegformerImageProcessor.from_pretrained(model_id)
     AutoModelForSemanticSegmentation.from_pretrained(model_id)
     logger.info("Human parser weights cached")
@@ -70,9 +70,9 @@ def warmup_controlnet() -> None:
     from diffusers import ControlNetModel
 
     settings = get_settings()
-    logger.info("Warming up ControlNet: %s", settings.controlnet_model)
+    logger.info("Warming up ControlNet: %s", settings.content.controlnet)
     dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-    ControlNetModel.from_pretrained(settings.controlnet_model, torch_dtype=dtype)
+    ControlNetModel.from_pretrained(settings.content.controlnet, torch_dtype=dtype)
     logger.info("ControlNet weights cached")
 
 
@@ -87,7 +87,7 @@ def download_all(*, skip_heavy: bool = False) -> None:
 
     warmup_pose_models()
     warmup_human_parser()
-    if settings.use_controlnet:
+    if settings.content.use_controlnet:
         warmup_controlnet()
     logger.info("All model assets ready")
 

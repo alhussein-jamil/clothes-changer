@@ -1,6 +1,6 @@
 import pytest
 
-from outfit_studio.operation_control import (
+from outfit_studio.ui.operation_control import (
     OperationCancelled,
     begin_operation,
     bind_session,

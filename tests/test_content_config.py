@@ -130,4 +130,4 @@ def test_settings_reads_inpaint_from_yaml_not_env(tmp_path, monkeypatch):
 
     clear_content_config_cache()
     get_settings.cache_clear()
-    assert get_settings().inpaint_model == "yaml-model.safetensors"
+    assert get_settings().content.default_inpaint == "yaml-model.safetensors"

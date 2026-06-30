@@ -55,7 +55,7 @@ class ClothesSegmentor:
         with self._lock:
             if self._model is not None:
                 return
-            model_id = self.settings.human_parser_model
+            model_id = self.settings.content.human_parser
             try:
                 with model_load_lock():
                     with log_duration(logger, "load human parser", device=self.device):
@@ -107,7 +107,7 @@ class ClothesSegmentor:
             )
             person_mask, clothes_mask = masks_from_parser_logits(
                 upsampled_logits,
-                confidence=self.settings.segmentation_clothes_confidence,
+                confidence=self.settings.content.clothes_confidence,
             )
 
             if debug is not None:
@@ -120,13 +120,13 @@ class ClothesSegmentor:
                     Image.fromarray(pred_np, mode="L"),
                 )
 
-            person_np = person_mask.cpu().numpy().astype(np.uint8)
-            clothes_np = clothes_mask.cpu().numpy().astype(np.uint8)
+            person_np = (person_mask > 0).to(torch.uint8).cpu().numpy()
+            clothes_np = (clothes_mask > 0).to(torch.uint8).cpu().numpy()
             person_np, clothes_np = refine_segmentation_masks(
                 person_np,
                 clothes_np,
-                min_component_area=self.settings.segmentation_min_component_area,
-                clothes_edge_grow_px=self.settings.segmentation_clothes_edge_grow_px,
+                min_component_area=self.settings.content.min_component_area,
+                clothes_edge_grow_px=self.settings.content.clothes_edge_grow_px,
             )
 
         logger.debug(

@@ -23,14 +23,11 @@ def test_list_local_models_from_env(monkeypatch):
         save_file({"unet.weight": torch.zeros(1)}, tmp / name)
 
     monkeypatch.setenv("OUTFIT_STUDIO_MODELS_DIR", str(tmp))
-    monkeypatch.setattr(
-        "outfit_studio.content_config.get_default_inpaint_model",
-        lambda: "outfit_inpaint_v1.safetensors",
-    )
     from outfit_studio.config import get_settings
-    from outfit_studio.content_config import clear_content_config_cache
+    from outfit_studio.content_config import ContentSettings
 
-    clear_content_config_cache()
+    test_content = ContentSettings(default_inpaint="outfit_inpaint_v1.safetensors")
+    monkeypatch.setattr("outfit_studio.content_config.get_content_settings", lambda: test_content)
     get_settings.cache_clear()
 
     engine = InpaintEngine()

@@ -11,7 +11,7 @@ import numpy as np
 from gradio_client import handle_file
 from PIL import Image
 
-from outfit_studio.constants import (
+from outfit_studio.ui.theme import (
     CLOTHES_COLOR,
     EDITOR_CANVAS_SIZE,
     PERSON_COLOR,
@@ -318,7 +318,8 @@ def apply_masks_to_editor(
     person, clothes = align_masks(person, clothes, ch, cw)
 
     layer_arr = np.zeros((ch, cw, 4), dtype=np.uint8)
-    layer_arr[person > 0] = PERSON_COLOR
+    person_only = (person > 0) & ~(clothes > 0)
+    layer_arr[person_only] = PERSON_COLOR
     layer_arr[clothes > 0] = CLOTHES_COLOR
     layer_pil = Image.fromarray(layer_arr, mode="RGBA")
 

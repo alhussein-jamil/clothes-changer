@@ -28,21 +28,21 @@ class PoseEstimator:
         logger.info(
             "PoseEstimator configured (device=%s, mode=%s)",
             self.device,
-            self.settings.pose_mode,
+            self.settings.content.pose_mode,
         )
 
     def _load(self) -> None:
         if self._det is not None:
             return
-        mode = self.settings.pose_mode
+        mode = self.settings.content.pose_mode
         cfg = Wholebody.MODE[mode]
         logger.info("Loading pose models (rtmlib %s, device=%s)...", mode, self.device)
         self._det = YOLOX(
             cfg["det"],
             model_input_size=cfg["det_input_size"],
             mode="human",
-            score_thr=self.settings.detection_threshold,
-            nms_thr=self.settings.detection_threshold,
+            score_thr=self.settings.content.detection_threshold,
+            nms_thr=self.settings.content.detection_threshold,
             backend=self.backend,
             device=self.device,
         )
@@ -124,7 +124,7 @@ class PoseEstimator:
             keypoints,
             scores,
             openpose_skeleton=True,
-            kpt_thr=self.settings.pose_keypoint_threshold,
+            kpt_thr=self.settings.content.keypoint_threshold,
         )
         logger.debug("Pose skeleton rendered %dx%d", pose_arr.shape[1], pose_arr.shape[0])
         return Image.fromarray(pose_arr)

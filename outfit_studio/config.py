@@ -73,75 +73,19 @@ class Settings(BaseSettings):
     torch_compile: bool = True
     torch_compile_cache: bool = True
     torch_compile_cache_dir: Path = Path(".cache/torch_compile")
-
-    # --- ML / content (from YAML; env vars intentionally not supported) ---
-
-    @property
-    def use_controlnet(self) -> bool:
-        return content_config.get_use_controlnet()
+    inductor_cache_dir: Path | None = None
 
     @property
-    def controlnet_model(self) -> str:
-        return content_config.get_controlnet_model()
-
-    @property
-    def inpaint_model(self) -> str:
-        return content_config.get_default_inpaint_model()
-
-    @property
-    def human_parser_model(self) -> str:
-        return content_config.get_human_parser_model()
-
-    @property
-    def detection_threshold(self) -> float:
-        return content_config.get_detection_threshold()
-
-    @property
-    def pose_keypoint_threshold(self) -> float:
-        return content_config.get_pose_keypoint_threshold()
-
-    @property
-    def pose_mode(self) -> str:
-        return content_config.get_pose_mode()
-
-    @property
-    def hand_protect(self) -> bool:
-        return content_config.get_hand_protect()
-
-    @property
-    def hand_padding_ratio(self) -> float:
-        return content_config.get_hand_padding_ratio()
-
-    @property
-    def segmentation_clothes_confidence(self) -> float:
-        return content_config.get_segmentation_clothes_confidence()
-
-    @property
-    def segmentation_min_component_area(self) -> int:
-        return content_config.get_segmentation_min_component_area()
-
-    @property
-    def segmentation_clothes_edge_grow_px(self) -> int:
-        return content_config.get_segmentation_clothes_edge_grow_px()
-
-    @property
-    def inpaint_steps(self) -> int:
-        return content_config.get_inpaint_steps()
-
-    @property
-    def guidance_scale(self) -> float:
-        return content_config.get_guidance_scale()
-
-    @property
-    def inference_size(self) -> int:
-        return content_config.get_inference_size()
+    def content(self) -> content_config.ContentSettings:
+        """Branded copy and ML defaults from config/content*.yaml."""
+        return content_config.get_content_settings()
 
     @property
     def compile_inpaint_size(self) -> int:
         """Fixed square size for every inpaint pass (keeps torch.compile graphs stable)."""
         from outfit_studio.constants import LATENT_ALIGN, MIN_LATENT_SIDE
 
-        aligned = self.inference_size // LATENT_ALIGN * LATENT_ALIGN
+        aligned = self.content.inference_size // LATENT_ALIGN * LATENT_ALIGN
         return max(aligned, MIN_LATENT_SIDE)
 
     @field_validator("log_level", mode="before")
@@ -201,6 +145,11 @@ class Settings(BaseSettings):
         return self._resolve(self.torch_compile_cache_dir)
 
     @property
+    def resolved_inductor_cache_dir(self) -> Path:
+        path = self.inductor_cache_dir or Path(".cache/torchinductor")
+        return self._resolve(path)
+
+    @property
     def resolved_session_secret(self) -> str:
         """Effective session signing key (auto-generated for local dev when unset)."""
         if self.session_secret != _DEFAULT_SESSION_SECRET and len(self.session_secret) >= 32:
@@ -239,7 +188,7 @@ def get_settings() -> Settings:
         settings.port,
         settings.log_level,
         settings.debug,
-        settings.inpaint_model,
+        settings.content.default_inpaint,
     )
     return settings
 

@@ -17,5 +17,4 @@ config/content.local.yaml
 my_debug/
 debug/
 debug-pipeline/
-out_debgu/
 .cache/

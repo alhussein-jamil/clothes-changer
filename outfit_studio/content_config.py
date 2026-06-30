@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,30 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _CONFIG_DIR = _PROJECT_ROOT / "config"
 _DEFAULT_FILE = _CONFIG_DIR / "content.default.yaml"
 _LOCAL_FILE = _CONFIG_DIR / "content.local.yaml"
+
+
+class ContentSettings(BaseModel):
+    """Typed view of config/content*.yaml — single source for ML and branding defaults."""
+
+    app_name: str = "Outfit Studio"
+    tagline: str = ""
+    default_prompt: str = ""
+    negative_prompt: str = ""
+    default_inpaint: str = "runwayml/stable-diffusion-inpainting"
+    human_parser: str = "fashn-ai/fashn-human-parser"
+    controlnet: str = "lllyasviel/sd-controlnet-openpose"
+    use_controlnet: bool = True
+    steps: int = 50
+    guidance_scale: float = 6.5
+    inference_size: int = 512
+    detection_threshold: float = 0.5
+    keypoint_threshold: float = 0.3
+    pose_mode: str = "balanced"
+    clothes_confidence: float = 0.15
+    min_component_area: int = 32
+    clothes_edge_grow_px: int = 7
+    checkpoint_urls: dict[str, str] = Field(default_factory=dict)
+    model_aliases: dict[str, list[str]] = Field(default_factory=dict)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -27,8 +52,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
-@lru_cache
-def get_content_config() -> dict[str, Any]:
+def _load_raw_config() -> dict[str, Any]:
     data: dict[str, Any] = {}
     sources: list[str] = []
     if _DEFAULT_FILE.is_file():
@@ -46,128 +70,132 @@ def get_content_config() -> dict[str, Any]:
     return data
 
 
+def _parse_content_settings(data: dict[str, Any]) -> ContentSettings:
+    app = data.get("app", {}) if isinstance(data.get("app"), dict) else {}
+    prompts = data.get("prompts", {}) if isinstance(data.get("prompts"), dict) else {}
+    models = data.get("models", {}) if isinstance(data.get("models"), dict) else {}
+    generation = data.get("generation", {}) if isinstance(data.get("generation"), dict) else {}
+    pose = data.get("pose", {}) if isinstance(data.get("pose"), dict) else {}
+    segmentation_raw = data.get("segmentation")
+    segmentation = segmentation_raw if isinstance(segmentation_raw, dict) else {}
+
+    human_parser = models.get("human_parser")
+    if human_parser is None:
+        human_parser = "fashn-ai/fashn-human-parser"
+
+    urls = models.get("download_urls", {})
+    aliases = models.get("aliases", {})
+
+    return ContentSettings(
+        app_name=str(app.get("name", "Outfit Studio")),
+        tagline=str(app.get("tagline", "")),
+        default_prompt=str(prompts.get("default", "")),
+        negative_prompt=str(prompts.get("negative", "")),
+        default_inpaint=str(models.get("default_inpaint", "runwayml/stable-diffusion-inpainting")),
+        human_parser=str(human_parser),
+        controlnet=str(models.get("controlnet", "lllyasviel/sd-controlnet-openpose")),
+        use_controlnet=bool(generation.get("use_controlnet", True)),
+        steps=int(generation.get("steps", 50)),
+        guidance_scale=float(generation.get("guidance_scale", 6.5)),
+        inference_size=int(generation.get("inference_size", 512)),
+        detection_threshold=float(pose.get("detection_threshold", 0.5)),
+        keypoint_threshold=float(pose.get("keypoint_threshold", 0.3)),
+        pose_mode=str(pose.get("mode", "balanced")),
+        clothes_confidence=float(segmentation.get("clothes_confidence", 0.15)),
+        min_component_area=int(segmentation.get("min_component_area", 32)),
+        clothes_edge_grow_px=int(segmentation.get("clothes_edge_grow_px", 7)),
+        checkpoint_urls={str(k): str(v) for k, v in urls.items()} if isinstance(urls, dict) else {},
+        model_aliases={
+            str(name): [str(alias) for alias in alias_list] for name, alias_list in aliases.items()
+        }
+        if isinstance(aliases, dict)
+        else {},
+    )
+
+
+@lru_cache
+def get_content_settings() -> ContentSettings:
+    return _parse_content_settings(_load_raw_config())
+
+
 def clear_content_config_cache() -> None:
-    get_content_config.cache_clear()
+    get_content_settings.cache_clear()
 
 
-def _section(name: str) -> dict[str, Any]:
-    value = get_content_config().get(name, {})
-    return value if isinstance(value, dict) else {}
-
-
-def _models() -> dict[str, Any]:
-    return _section("models")
-
-
-def _generation() -> dict[str, Any]:
-    return _section("generation")
-
-
-def _pose() -> dict[str, Any]:
-    return _section("pose")
-
-
-def _hands() -> dict[str, Any]:
-    return _section("hands")
-
-
-def _segmentation() -> dict[str, Any]:
-    return _section("segmentation")
+# Thin accessors — keep call sites readable without reaching into nested fields everywhere.
 
 
 def get_app_name() -> str:
-    return str(get_content_config().get("app", {}).get("name", "Outfit Studio"))
+    return get_content_settings().app_name
 
 
 def get_tagline() -> str:
-    return str(get_content_config().get("app", {}).get("tagline", ""))
+    return get_content_settings().tagline
 
 
 def get_default_prompt() -> str:
-    return str(get_content_config().get("prompts", {}).get("default", ""))
+    return get_content_settings().default_prompt
 
 
 def get_default_negative_prompt() -> str:
-    return str(get_content_config().get("prompts", {}).get("negative", ""))
+    return get_content_settings().negative_prompt
 
 
 def get_default_inpaint_model() -> str:
-    return str(_models().get("default_inpaint", "runwayml/stable-diffusion-inpainting"))
+    return get_content_settings().default_inpaint
 
 
 def get_human_parser_model() -> str:
-    models = _models()
-    if "human_parser" in models:
-        return str(models["human_parser"])
-    if "segformer" in models:
-        logger.warning("models.segformer is deprecated; rename to models.human_parser")
-        return str(models["segformer"])
-    return "fashn-ai/fashn-human-parser"
+    return get_content_settings().human_parser
 
 
 def get_controlnet_model() -> str:
-    return str(_models().get("controlnet", "lllyasviel/sd-controlnet-openpose"))
+    return get_content_settings().controlnet
 
 
 def get_use_controlnet() -> bool:
-    return bool(_generation().get("use_controlnet", True))
+    return get_content_settings().use_controlnet
 
 
 def get_inpaint_steps() -> int:
-    return int(_generation().get("steps", 50))
+    return get_content_settings().steps
 
 
 def get_guidance_scale() -> float:
-    return float(_generation().get("guidance_scale", 6.5))
+    return get_content_settings().guidance_scale
 
 
 def get_inference_size() -> int:
-    return int(_generation().get("inference_size", 512))
+    return get_content_settings().inference_size
 
 
 def get_detection_threshold() -> float:
-    return float(_pose().get("detection_threshold", 0.5))
+    return get_content_settings().detection_threshold
 
 
 def get_pose_keypoint_threshold() -> float:
-    return float(_pose().get("keypoint_threshold", 0.3))
+    return get_content_settings().keypoint_threshold
 
 
 def get_pose_mode() -> str:
-    return str(_pose().get("mode", "balanced"))
-
-
-def get_hand_protect() -> bool:
-    return bool(_hands().get("protect", True))
-
-
-def get_hand_padding_ratio() -> float:
-    return float(_hands().get("padding_ratio", 0.35))
+    return get_content_settings().pose_mode
 
 
 def get_segmentation_clothes_confidence() -> float:
-    from outfit_studio.constants import SEGMENTATION_CLOTHES_CONFIDENCE
-
-    return float(_segmentation().get("clothes_confidence", SEGMENTATION_CLOTHES_CONFIDENCE))
+    return get_content_settings().clothes_confidence
 
 
 def get_segmentation_min_component_area() -> int:
-    from outfit_studio.constants import SEGMENTATION_MIN_COMPONENT_AREA
-
-    return int(_segmentation().get("min_component_area", SEGMENTATION_MIN_COMPONENT_AREA))
+    return get_content_settings().min_component_area
 
 
 def get_segmentation_clothes_edge_grow_px() -> int:
-    from outfit_studio.constants import SEGMENTATION_CLOTHES_EDGE_GROW_PX
-
-    return int(_segmentation().get("clothes_edge_grow_px", SEGMENTATION_CLOTHES_EDGE_GROW_PX))
+    return get_content_settings().clothes_edge_grow_px
 
 
 def get_checkpoint_urls() -> dict[str, str]:
-    urls = _models().get("download_urls", {})
-    return {str(k): str(v) for k, v in urls.items()}
+    return dict(get_content_settings().checkpoint_urls)
 
 
 def get_model_aliases() -> dict[str, list[str]]:
-    raw = _models().get("aliases", {})
-    return {str(name): [str(alias) for alias in aliases] for name, aliases in raw.items()}
+    return dict(get_content_settings().model_aliases)

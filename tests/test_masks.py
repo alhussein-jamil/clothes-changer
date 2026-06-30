@@ -1,13 +1,13 @@
 import numpy as np
 from PIL import Image
 
-from outfit_studio.constants import CLOTHES_COLOR, EDITOR_CANVAS_SIZE, PERSON_COLOR
 from outfit_studio.ui.masks import (
     apply_masks_to_editor,
     editor_mask_reset,
     letterbox_to_editor_canvas,
     parse_editor_masks,
 )
+from outfit_studio.ui.theme import CLOTHES_COLOR, EDITOR_CANVAS_SIZE, PERSON_COLOR
 
 
 def test_letterbox_to_editor_canvas_centers_portrait():

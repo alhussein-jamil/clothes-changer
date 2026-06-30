@@ -1,0 +1,118 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f4f4f5;
+  --card: #ffffff;
+  --text: #18181b;
+  --text-muted: #71717a;
+  --border: #d4d4d8;
+  --input-bg: #ffffff;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-text: #ffffff;
+  --tab-active-bg: #eff6ff;
+  --tab-active-border: #2563eb;
+  --tab-active-text: #1d4ed8;
+  --error-bg: #fef2f2;
+  --error-text: #b91c1c;
+  --success-bg: #f0fdf4;
+  --success-text: #166534;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #09090b;
+    --card: #18181b;
+    --text: #fafafa;
+    --text-muted: #a1a1aa;
+    --border: #3f3f46;
+    --input-bg: #27272a;
+    --primary: #3b82f6;
+    --primary-hover: #60a5fa;
+    --primary-text: #ffffff;
+    --tab-active-bg: #172554;
+    --tab-active-border: #3b82f6;
+    --tab-active-text: #93c5fd;
+    --error-bg: #450a0a;
+    --error-text: #fca5a5;
+    --success-bg: #052e16;
+    --success-text: #86efac;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  max-width: 420px;
+  margin: 48px auto;
+  padding: 0 16px 32px;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: var(--shadow);
+}
+h1 { font-size: 1.5rem; margin: 0 0 8px; font-weight: 700; }
+p.sub { color: var(--text-muted); margin: 0 0 8px; font-size: 0.95rem; line-height: 1.45; }
+form { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
+label { font-weight: 600; font-size: 0.875rem; color: var(--text); }
+input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 1rem;
+  background: var(--input-bg);
+  color: var(--text);
+}
+input:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  border-color: var(--primary);
+}
+button {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: 600;
+}
+button.primary {
+  background: var(--primary);
+  color: var(--primary-text);
+}
+button.primary:hover { background: var(--primary-hover); }
+.error {
+  color: var(--error-text);
+  background: var(--error-bg);
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+.success {
+  color: var(--success-text);
+  background: var(--success-bg);
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+.tabs { display: flex; gap: 8px; margin-top: 16px; }
+.tabs a {
+  flex: 1;
+  text-align: center;
+  padding: 8px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--text);
+  border: 1px solid var(--border);
+  font-weight: 500;
+}
+.tabs a.active {
+  background: var(--tab-active-bg);
+  border-color: var(--tab-active-border);
+  color: var(--tab-active-text);
+}

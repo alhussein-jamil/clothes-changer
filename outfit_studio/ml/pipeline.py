@@ -27,9 +27,8 @@ from outfit_studio.ml.gpu_memory import free_cuda_cache, prepare_for_inpaint
 from outfit_studio.ml.inpainter import get_inpaint_engine
 from outfit_studio.ml.pipeline_debug import PipelineDebugSession
 from outfit_studio.ml.pose import ensure_pose_on_gpu, get_pose_estimator
-from outfit_studio.ml.segmentation import run_segmentation
-from outfit_studio.operation_control import check_cancelled
-from outfit_studio.utils.hand_mask import build_combined_hand_mask, subtract_hand_mask
+from outfit_studio.ml.segmentation_workflow import run_segmentation
+from outfit_studio.ui.operation_control import check_cancelled
 from outfit_studio.utils.image import (
     align_masks,
     apply_reflection_padding,
@@ -92,7 +91,6 @@ class GenerationPipeline:
         generator: torch.Generator,
         model: str | None,
         use_controlnet: bool,
-        hand_protect: bool | None = None,
         progress: ProgressCallback | None = None,
         progress_span: tuple[float, float] = (0.0, 1.0),
         person_index: int = 1,
@@ -151,12 +149,8 @@ class GenerationPipeline:
 
         pose_est = get_pose_estimator()
         control_image = None
-        pose_keypoints = None
-        pose_scores = None
-        protect_hands = self.settings.hand_protect if hand_protect is None else hand_protect
-        need_pose = use_controlnet or protect_hands
         if (
-            need_pose
+            use_controlnet
             and cnet_image.width >= MIN_POSE_IMAGE_SIDE
             and cnet_image.height >= MIN_POSE_IMAGE_SIDE
         ):
@@ -175,45 +169,21 @@ class GenerationPipeline:
             bboxes = _bbox_from_mask(pose_region.astype(np.uint8))
             logger.debug("Pose bbox from segmentation mask")
             pose_keypoints, pose_scores = pose_est.estimate_keypoints(cnet_image, bboxes=bboxes)
-            if use_controlnet:
-                sub(PersonProgress.POSE_GUIDE, "Building ControlNet guide")
-                control_image = pose_est.render_skeleton(
-                    cnet_image.size,
-                    pose_keypoints,
-                    pose_scores,
-                )
-        elif need_pose:
+            sub(PersonProgress.POSE_GUIDE, "Building ControlNet guide")
+            control_image = pose_est.render_skeleton(
+                cnet_image.size,
+                pose_keypoints,
+                pose_scores,
+            )
+        elif use_controlnet:
             logger.warning(
-                "Skipping pose for degenerate crop %dx%d",
+                "Skipping ControlNet pose for degenerate crop %dx%d",
                 cnet_image.width,
                 cnet_image.height,
             )
             sub(PersonProgress.PREP_AREA, "Preparing inpaint area (no pose)")
         else:
             sub(PersonProgress.PREP_AREA, "Preparing inpaint area")
-
-        if protect_hands and pose_keypoints is not None and pose_scores is not None:
-            hand_mask = build_combined_hand_mask(
-                pose_keypoints,
-                pose_scores,
-                (cnet_image.height, cnet_image.width),
-                kpt_thr=self.settings.pose_keypoint_threshold,
-                padding_ratio=self.settings.hand_padding_ratio,
-            )
-            if hand_mask.any():
-                clothes_np = subtract_hand_mask(np.array(binary_mask), hand_mask)
-                binary_mask = Image.fromarray((clothes_np * MASK_ON).astype(np.uint8))
-                cnet_image = padded_image.copy()
-                cnet_image.paste(0, (0, 0), binary_mask)
-                cnet_image = cnet_image.convert("RGB")
-                logger.info(
-                    "Hand-protect removed %d px from clothes inpaint mask",
-                    int(hand_mask.sum() // 255),
-                )
-                if debug is not None:
-                    prefix = f"person_{person_index:02d}"
-                    debug.save_mask(f"{prefix}/02b_hand_protect.png", hand_mask > 0)
-                    debug.save_mask(f"{prefix}/02c_clothes_mask_protected.png", clothes_np > 0)
 
         engine = get_inpaint_engine()
         sub(PersonProgress.LOAD_MODEL, "Preparing inpaint")
@@ -307,7 +277,6 @@ class GenerationPipeline:
         seed: int | None = None,
         model: str | None = None,
         use_controlnet: bool | None = None,
-        hand_protect: bool | None = None,
         username: str = "guest",
         progress: ProgressCallback | None = None,
         debug_session_dir: str | None = None,
@@ -346,12 +315,11 @@ class GenerationPipeline:
 
         prompt = prompt or get_default_prompt()
         negative_prompt = negative_prompt or get_default_negative_prompt()
-        steps = steps or self.settings.inpaint_steps
-        guidance_scale = guidance_scale or self.settings.guidance_scale
+        steps = steps or self.settings.content.steps
+        guidance_scale = guidance_scale or self.settings.content.guidance_scale
         use_controlnet = (
-            use_controlnet if use_controlnet is not None else self.settings.use_controlnet
+            use_controlnet if use_controlnet is not None else self.settings.content.use_controlnet
         )
-        protect_hands = self.settings.hand_protect if hand_protect is None else hand_protect
         seed = seed if seed is not None else random.randint(0, SEED_MAX)
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -373,7 +341,6 @@ class GenerationPipeline:
                     "inference_steps": steps,
                     "guidance_scale": guidance_scale,
                     "use_controlnet": use_controlnet,
-                    "hand_protect": protect_hands,
                     "prompt": prompt,
                     "negative_prompt": negative_prompt,
                 }
@@ -381,7 +348,7 @@ class GenerationPipeline:
 
         pose_est = get_pose_estimator()
         report_checked(GenerateProgress.DETECT_PEOPLE, "Detecting people")
-        if protect_hands or use_controlnet:
+        if use_controlnet:
             pose_est = ensure_pose_on_gpu()
         bboxes = pose_est.get_bboxes(image)
         instances = prepare_instance_masks(person_mask, clothes_mask, bboxes)
@@ -439,7 +406,6 @@ class GenerationPipeline:
                 generator,
                 model,
                 use_controlnet,
-                hand_protect=protect_hands,
                 progress=report_checked,
                 progress_span=(span_start, span_end),
                 person_index=idx,

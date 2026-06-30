@@ -22,6 +22,14 @@ def test_is_sdxl_detection_by_name():
     assert not is_sdxl_model_name("cyberrealistic_v80Inpainting.safetensors")
 
 
+def test_inpaint_checkpoint_listable_skips_tensor_read(tmp_path: Path):
+    path = tmp_path / "model.safetensors"
+    save_file({"layer.weight": torch.zeros(2, 2)}, path)
+    from outfit_studio.ml.checkpoints import inpaint_checkpoint_listable
+
+    assert inpaint_checkpoint_listable(path)
+
+
 def test_inpaint_checkpoint_valid_reads_safetensors(tmp_path: Path):
     path = tmp_path / "model.safetensors"
     save_file({"layer.weight": torch.zeros(2, 2)}, path)

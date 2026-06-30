@@ -103,6 +103,39 @@ def test_clip_bbox_when_mask_wider_than_image():
     assert clipped[0] < clipped[2]
 
 
+def test_get_crop_info_edge_mask_has_positive_size():
+    from outfit_studio.utils.image import apply_reflection_padding, get_crop_info
+
+    mask = np.zeros((500, 300), dtype=np.uint8)
+    mask[480:495, 290:300] = 1
+    crop = get_crop_info(Image.fromarray(mask, mode="L"))
+    assert crop["right"] > crop["left"]
+    assert crop["bottom"] > crop["top"]
+    assert crop["center"][0] >= 0
+    assert crop["center"][1] >= 0
+
+    image = Image.new("RGB", (300, 500))
+    box = (crop["left"], crop["top"], crop["right"], crop["bottom"])
+    cropped = image.crop(box)
+    target_size = max(cropped.size)
+    padded, _ = apply_reflection_padding(
+        cropped,
+        (target_size, target_size),
+        center=crop["center"],
+    )
+    assert padded.size == (target_size, target_size)
+
+
+def test_get_crop_info_single_pixel_mask():
+    from outfit_studio.utils.image import get_crop_info
+
+    mask = np.zeros((40, 40), dtype=np.uint8)
+    mask[10, 10] = 1
+    crop = get_crop_info(Image.fromarray(mask, mode="L"))
+    assert crop["right"] > crop["left"]
+    assert crop["bottom"] > crop["top"]
+
+
 def test_align_masks_resizes():
     from outfit_studio.utils.image import align_masks
 
@@ -120,6 +153,16 @@ def test_mask_overlay():
     clothes[5:10, 5:10] = 1
     overlay = mask_overlay(img, person, clothes)
     assert overlay.mode == "RGBA"
+
+
+def test_mask_overlay_hides_person_under_clothes():
+    img = Image.new("RGB", (20, 20), color=(128, 128, 128))
+    person = np.ones((20, 20), dtype=np.uint8)
+    clothes = np.zeros((20, 20), dtype=np.uint8)
+    clothes[5:15, 5:15] = 1
+    overlay = np.array(mask_overlay(img, person, clothes))
+    overlap = (person > 0) & (clothes > 0)
+    assert overlay[overlap][0, 1] > overlay[overlap][0, 0]
 
 
 def test_blend_covers_grown_garment_edge():

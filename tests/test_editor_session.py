@@ -1,7 +1,6 @@
 import numpy as np
 from PIL import Image
 
-from outfit_studio.constants import EDITOR_CANVAS_SIZE
 from outfit_studio.ui.editor_session import (
     EditorSession,
     UploadSegmentAction,
@@ -9,6 +8,7 @@ from outfit_studio.ui.editor_session import (
     resolve_clean_on_upload,
 )
 from outfit_studio.ui.masks import apply_masks_to_editor, background_key_from_image
+from outfit_studio.ui.theme import EDITOR_CANVAS_SIZE
 from outfit_studio.utils.image import mask_overlay
 
 

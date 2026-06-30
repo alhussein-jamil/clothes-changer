@@ -5,15 +5,17 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import gradio as gr
 import uvicorn
 from fastapi import FastAPI, Request
 
 from outfit_studio.auth.routes import register_auth_routes
 from outfit_studio.auth.security import AuthRedirectMiddleware, SecurityHeadersMiddleware
 from outfit_studio.auth.session import SessionManager
+from outfit_studio.ui.launch import collect_allowed_paths, mount_gradio_on_fastapi
 
 if TYPE_CHECKING:
+    import gradio as gr
+
     from outfit_studio.ui.gradio_app import GradioApp
 
 logger = logging.getLogger(__name__)
@@ -32,24 +34,12 @@ def create_fastapi_app(gradio_app: GradioApp, demo: gr.Blocks) -> FastAPI:
     register_auth_routes(app, gradio_app.db, settings, sessions)
 
     auth_dependency = resolve_username if settings.require_auth else None
-    launch_kwargs: dict = {
-        "server_name": settings.host,
-        "server_port": settings.port,
-        "share": settings.enable_sharing,
-        "allowed_paths": gradio_app._allowed_paths(),
-    }
-    favicon = settings.resolved_favicon_path if settings.resolved_favicon_path.is_file() else None
-    if favicon:
-        launch_kwargs["favicon_path"] = str(favicon)
-
-    gr.mount_gradio_app(
+    mount_gradio_on_fastapi(
         app,
         demo,
-        path="/",
+        settings,
         auth_dependency=auth_dependency,
-        favicon_path=launch_kwargs.get("favicon_path"),
-        allowed_paths=launch_kwargs["allowed_paths"],
-        show_error=settings.debug,
+        allowed_paths=collect_allowed_paths(settings),
     )
     return app
 

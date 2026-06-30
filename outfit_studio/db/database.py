@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -16,7 +17,7 @@ from outfit_studio.constants import (
     HISTORY_DB_LIMIT,
     MIN_PASSWORD_LENGTH,
 )
-from outfit_studio.schemas import UserOut
+from outfit_studio.db.schemas import UserOut
 
 logger = logging.getLogger(__name__)
 ph = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4)
@@ -24,26 +25,6 @@ ph = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4)
 
 class DatabaseError(Exception):
     pass
-
-
-@contextmanager
-def _conn():
-    settings = get_settings()
-    settings.resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
-    logger.debug("Opening DB connection: %s", settings.resolved_db_path)
-    conn = sqlite3.connect(str(settings.resolved_db_path), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        logger.exception("DB transaction rolled back")
-        raise
-    finally:
-        conn.close()
 
 
 def _row_to_user(row: sqlite3.Row) -> UserOut:
@@ -59,12 +40,40 @@ def _row_to_user(row: sqlite3.Row) -> UserOut:
 
 class Database:
     def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._conn: sqlite3.Connection | None = None
         logger.info("Initializing database at %s", get_settings().resolved_db_path)
         self._init_schema()
         logger.debug("Database schema ready")
 
+    def _ensure_connection(self) -> sqlite3.Connection:
+        if self._conn is not None:
+            return self._conn
+        settings = get_settings()
+        db_path = settings.resolved_db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        self._conn = conn
+        return conn
+
+    @contextmanager
+    def _transaction(self):
+        with self._lock:
+            conn = self._ensure_connection()
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                logger.exception("DB transaction rolled back")
+                raise
+
     def _init_schema(self) -> None:
-        with _conn() as conn:
+        with self._transaction() as conn:
             conn.executescript(
                 f"""
                 CREATE TABLE IF NOT EXISTS users (
@@ -91,6 +100,8 @@ class Database:
                 """
                 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
                 CREATE INDEX IF NOT EXISTS idx_images_user_id ON images(user_id);
+                CREATE INDEX IF NOT EXISTS idx_images_user_created
+                    ON images(user_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_users_signup_ip ON users(signup_ip);
                 CREATE INDEX IF NOT EXISTS idx_users_device_fp ON users(device_fingerprint);
                 """
@@ -145,7 +156,7 @@ class Database:
         if len(password) < MIN_PASSWORD_LENGTH:
             raise DatabaseError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
         try:
-            with _conn() as conn:
+            with self._transaction() as conn:
                 self._enforce_signup_limits(
                     conn,
                     signup_ip=signup_ip,
@@ -179,7 +190,7 @@ class Database:
     def record_login(self, username: str, ip: str | None) -> None:
         if not ip:
             return
-        with _conn() as conn:
+        with self._transaction() as conn:
             conn.execute(
                 "UPDATE users SET last_login_ip = ? WHERE username = ?",
                 (ip, username),
@@ -187,7 +198,7 @@ class Database:
 
     def authenticate(self, username: str, password: str) -> bool:
         logger.debug("Authenticating user %r", username)
-        with _conn() as conn:
+        with self._transaction() as conn:
             row = conn.execute(
                 "SELECT id, password_hash, is_active FROM users WHERE username = ?",
                 (username,),
@@ -204,7 +215,7 @@ class Database:
         return True
 
     def get_user(self, username: str) -> UserOut | None:
-        with _conn() as conn:
+        with self._transaction() as conn:
             row = conn.execute(
                 "SELECT id, username, credits, is_admin, created_at FROM users WHERE username = ?",
                 (username,),
@@ -214,7 +225,7 @@ class Database:
         return _row_to_user(row)
 
     def user_exists(self, username: str) -> bool:
-        with _conn() as conn:
+        with self._transaction() as conn:
             row = conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone()
         return row is not None
 
@@ -223,25 +234,24 @@ class Database:
         return user.credits if user else 0
 
     def deduct_credit(self, username: str) -> bool:
-        with _conn() as conn:
-            cur = conn.execute(
+        with self._transaction() as conn:
+            row = conn.execute(
                 "UPDATE users SET credits = credits - 1 "
-                "WHERE username = ? AND credits > 0 AND is_active = 1",
+                "WHERE username = ? AND credits > 0 AND is_active = 1 "
+                "RETURNING credits",
                 (username,),
-            )
-            ok = cur.rowcount > 0
-        if ok:
-            remaining = self.get_credits(username)
-            logger.info("Deducted 1 credit from %r (remaining=%d)", username, remaining)
-        else:
+            ).fetchone()
+        if row is None:
             logger.warning("Could not deduct credit from %r", username)
-        return ok
+            return False
+        logger.info("Deducted 1 credit from %r (remaining=%d)", username, row["credits"])
+        return True
 
     def set_credits(self, username: str, credits: int) -> bool:
         if credits < 0:
             logger.warning("set_credits rejected negative value for %r: %d", username, credits)
             return False
-        with _conn() as conn:
+        with self._transaction() as conn:
             cur = conn.execute(
                 "UPDATE users SET credits = ? WHERE username = ?", (credits, username)
             )
@@ -251,7 +261,7 @@ class Database:
         return ok
 
     def log_image(self, username: str, filename: str, prompt: str) -> None:
-        with _conn() as conn:
+        with self._transaction() as conn:
             row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
             if not row:
                 logger.warning("log_image: user %r not found", username)
@@ -263,24 +273,24 @@ class Database:
         logger.info("Logged generation for %r: %s", username, filename)
 
     def get_history(self, username: str) -> list[dict]:
-        with _conn() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
-                f"""
-                SELECT i.id, i.filename, i.prompt, i.created_at
+                """
+                SELECT i.filename, i.prompt
                 FROM images i
                 JOIN users u ON u.id = i.user_id
                 WHERE u.username = ?
                 ORDER BY i.created_at DESC
-                LIMIT {HISTORY_DB_LIMIT}
+                LIMIT ?
                 """,
-                (username,),
+                (username, HISTORY_DB_LIMIT),
             ).fetchall()
         history = [dict(r) for r in rows]
         logger.debug("Fetched %d history rows for %r", len(history), username)
         return history
 
     def list_users(self) -> list[UserOut]:
-        with _conn() as conn:
+        with self._transaction() as conn:
             rows = conn.execute(
                 "SELECT id, username, credits, is_admin, created_at FROM users ORDER BY username"
             ).fetchall()

@@ -40,12 +40,14 @@ from outfit_studio.content_config import (
 )
 from outfit_studio.ml.checkpoints import (
     checkpoint_architecture,
+    clear_checkpoint_cache,
+    inpaint_checkpoint_listable,
     inpaint_checkpoint_valid,
     is_hub_model_id,
 )
 from outfit_studio.ml.compile_cache import load_artifacts, save_artifacts
 from outfit_studio.ml.gpu_memory import free_cuda_cache, model_load_lock
-from outfit_studio.operation_control import OperationCancelled, check_cancelled
+from outfit_studio.ui.operation_control import OperationCancelled, check_cancelled
 from outfit_studio.utils.logging import log_duration
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,8 @@ class InpaintEngine:
         self._preload_lock = threading.Lock()
         self._preload_thread: threading.Thread | None = None
         self._work_abort = threading.Event()
+        self._model_list_fingerprint: tuple[tuple[str, int], ...] | None = None
+        self._model_list_cache: list[dict] | None = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = torch.bfloat16 if self.device.type == "cuda" else torch.float32
         logger.info("InpaintEngine ready (device=%s, dtype=%s)", self.device, self.dtype)
@@ -137,6 +141,23 @@ class InpaintEngine:
             self._preload_thread = thread
         thread.start()
 
+    def invalidate_model_list_cache(self) -> None:
+        self._model_list_fingerprint = None
+        self._model_list_cache = None
+
+    def _models_dir_fingerprint(self) -> tuple[tuple[str, int], ...]:
+        models_dir = self.settings.resolved_models_dir
+        if not models_dir.is_dir():
+            return ()
+        entries: list[tuple[str, int]] = []
+        for pattern in ("*.safetensors", "*.ckpt"):
+            for path in models_dir.glob(pattern):
+                try:
+                    entries.append((path.name, path.stat().st_mtime_ns))
+                except OSError:
+                    continue
+        return tuple(sorted(entries))
+
     def _discover_local_models(self) -> list[str]:
         models_dir = self.settings.resolved_models_dir
         if not models_dir.is_dir():
@@ -145,16 +166,21 @@ class InpaintEngine:
         found: list[str] = []
         for pattern in ("*.safetensors", "*.ckpt"):
             for path in sorted(models_dir.glob(pattern)):
-                if inpaint_checkpoint_valid(path):
+                if inpaint_checkpoint_listable(path):
                     found.append(path.name)
         logger.debug("Discovered %d local checkpoint(s)", len(found))
         return found
 
     def list_models(self) -> list[dict]:
+        fingerprint = self._models_dir_fingerprint()
+        if self._model_list_cache is not None and self._model_list_fingerprint == fingerprint:
+            return self._model_list_cache
+
         models: list[dict] = []
         local = self._discover_local_models()
-        all_names = list(local)
+        local_set = set(local)
         default_id = get_default_inpaint_model()
+        all_names = list(local)
         if default_id not in all_names:
             all_names.insert(0, default_id)
         for name in get_checkpoint_urls():
@@ -173,7 +199,7 @@ class InpaintEngine:
                 )
                 continue
             path = self._resolve_local_model(name)
-            valid = path.is_file() and inpaint_checkpoint_valid(path)
+            valid = True if name in local_set else path.is_file() and inpaint_checkpoint_valid(path)
             arch = checkpoint_architecture(name, path) if valid else "sd15"
             source = "local" if valid else "download"
             models.append(
@@ -186,7 +212,7 @@ class InpaintEngine:
             )
 
         if not models:
-            preferred = self.settings.inpaint_model
+            preferred = self.settings.content.default_inpaint
             models.append(
                 {
                     "id": preferred,
@@ -197,11 +223,13 @@ class InpaintEngine:
                     "arch": "sd15",
                 }
             )
+        self._model_list_fingerprint = fingerprint
+        self._model_list_cache = models
         return models
 
     def default_model_id(self) -> str:
         models = self.list_models()
-        preferred = self.settings.inpaint_model
+        preferred = self.settings.content.default_inpaint
         ids = [m["id"] for m in models]
         if preferred in ids:
             return preferred
@@ -269,6 +297,8 @@ class InpaintEngine:
             model_path.unlink()
             msg = f"Downloaded {model_path.name} is not a valid checkpoint"
             raise RuntimeError(msg)
+        clear_checkpoint_cache()
+        self.invalidate_model_list_cache()
         return model_path
 
     def _resolve_local_model(self, model_id: str) -> Path:
@@ -305,7 +335,7 @@ class InpaintEngine:
         model_id = model_id or self.default_model_id()
         arch = self.model_architecture(model_id)
         use_controlnet = (
-            use_controlnet if use_controlnet is not None else self.settings.use_controlnet
+            use_controlnet if use_controlnet is not None else self.settings.content.use_controlnet
         )
         if arch == "sdxl" and use_controlnet:
             logger.info("Disabling ControlNet for SDXL checkpoint %s", model_id)
@@ -347,7 +377,7 @@ class InpaintEngine:
                             )
                     elif use_controlnet and self.device.type == "cuda":
                         controlnet = ControlNetModel.from_pretrained(
-                            self.settings.controlnet_model,
+                            self.settings.content.controlnet,
                             torch_dtype=self.dtype,
                         )
                         if is_hub_model_id(model_path):
@@ -569,8 +599,8 @@ class InpaintEngine:
             self.load()
         assert self._pipe is not None
 
-        steps = steps or self.settings.inpaint_steps
-        guidance_scale = guidance_scale or self.settings.guidance_scale
+        steps = steps or self.settings.content.steps
+        guidance_scale = guidance_scale or self.settings.content.guidance_scale
 
         prompt, negative_prompt = self._truncate_prompts(prompt, negative_prompt)
 

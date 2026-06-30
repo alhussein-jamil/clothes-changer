@@ -16,8 +16,8 @@ from outfit_studio.constants import (
     CROP_BOX_PADDING_RATIO,
     DEFAULT_MASK_GROW_PX,
     INSTANCE_MASK_GROW_DIVISOR,
-    UI,
 )
+from outfit_studio.ui.theme import UI
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -41,7 +41,7 @@ def mask_overlay(
     """RGBA overlay for editor preview."""
     base = np.array(image.convert("RGBA"))
     overlay = np.zeros_like(base)
-    person_on = person_mask > 0
+    person_on = (person_mask > 0) & ~(clothes_mask > 0)
     clothes_on = clothes_mask > 0
     overlay[person_on] = person_color
     overlay[clothes_on] = clothes_color
@@ -108,9 +108,14 @@ def apply_reflection_padding(
     new_size: tuple[int, int],
     center: tuple[int, int] | None = None,
 ) -> tuple[Image.Image, dict | None]:
-    """Pad image to square using edge reflection."""
+    """Pad image to square using edge reflection.
+
+    *center* is in crop-local coordinates (origin = top-left of *image*).
+    """
     original_width, original_height = image.size
     new_width, new_height = new_size
+    if original_width <= 0 or original_height <= 0 or new_width <= 0 or new_height <= 0:
+        return image, None
 
     aspect_ratio = original_width / original_height
     new_aspect_ratio = new_width / new_height
@@ -122,8 +127,9 @@ def apply_reflection_padding(
         scaled_height = int(new_width / aspect_ratio)
         scaled_image = image.resize((new_width, scaled_height), Image.LANCZOS)
         center_y_ratio = center[1] / original_height
-        adjusted_padding_top = int((new_height - scaled_height) * center_y_ratio)
-        adjusted_padding_bottom = new_height - scaled_height - adjusted_padding_top
+        slack = max(0, new_height - scaled_height)
+        adjusted_padding_top = int(slack * center_y_ratio)
+        adjusted_padding_bottom = slack - adjusted_padding_top
 
         scaled_arr = np.array(scaled_image)
         pad_width = ((adjusted_padding_top, adjusted_padding_bottom), (0, 0))
@@ -143,8 +149,9 @@ def apply_reflection_padding(
         scaled_width = int(new_height * aspect_ratio)
         scaled_image = image.resize((scaled_width, new_height), Image.LANCZOS)
         center_x_ratio = center[0] / original_width
-        adjusted_padding_left = int((new_width - scaled_width) * center_x_ratio)
-        adjusted_padding_right = new_width - scaled_width - adjusted_padding_left
+        slack = max(0, new_width - scaled_width)
+        adjusted_padding_left = int(slack * center_x_ratio)
+        adjusted_padding_right = slack - adjusted_padding_left
 
         scaled_arr = np.array(scaled_image)
         pad_width = ((0, 0), (adjusted_padding_left, adjusted_padding_right))
@@ -242,16 +249,26 @@ def composite_crop_onto(
 
 def get_crop_info(mask: Image.Image) -> dict:
     top, left, bottom, right = get_bounding_box(np.array(mask) > 0)
-    max_dim = max(bottom - top, right - left)
+    max_dim = max(bottom - top, right - left, 1)
     padding = int(CROP_BOX_PADDING_RATIO * max_dim)
-    target_size = max_dim + 2 * padding
+    target_size = max(max_dim + 2 * padding, 1)
     center_x, center_y = (left + right) // 2, (top + bottom) // 2
+    half_lo = target_size // 2
+    half_hi = target_size - half_lo
+    crop_left = max(0, center_x - half_lo)
+    crop_top = max(0, center_y - half_lo)
+    crop_right = min(mask.width, center_x + half_hi)
+    crop_bottom = min(mask.height, center_y + half_hi)
+    if crop_right <= crop_left:
+        crop_right = min(mask.width, crop_left + 1)
+    if crop_bottom <= crop_top:
+        crop_bottom = min(mask.height, crop_top + 1)
     return {
-        "left": max(0, center_x - target_size // 2),
-        "top": max(0, center_y - target_size // 2),
-        "right": min(mask.width, center_x + target_size // 2),
-        "bottom": min(mask.height, center_y + target_size // 2),
-        "center": (center_x, center_y),
+        "left": crop_left,
+        "top": crop_top,
+        "right": crop_right,
+        "bottom": crop_bottom,
+        "center": (center_x - crop_left, center_y - crop_top),
     }
 
 

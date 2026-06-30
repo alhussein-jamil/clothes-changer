@@ -3,17 +3,10 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image
 
-from outfit_studio.constants import EDITOR_CANVAS_SIZE
 from outfit_studio.ui.gradio_app import GradioApp, build_header_html
 from outfit_studio.ui.masks import apply_masks_to_editor, background_key_from_image
+from outfit_studio.ui.theme import EDITOR_CANVAS_SIZE
 from outfit_studio.utils.image import mask_overlay
-
-
-def test_authenticate(db):
-    app = GradioApp(db=db)
-    db.register_user("user1", "password123", credits=5)
-    assert app.authenticate("user1", "password123")
-    assert not app.authenticate("user1", "wrong")
 
 
 def test_build_header_html_uses_logo_image():
@@ -32,7 +25,7 @@ def _editor_value(update: dict) -> dict:
     return update.get("value", update)
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_segment_after_example(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(200, 100, 50))
@@ -59,7 +52,7 @@ def test_segment_after_example(mock_run_segmentation, db):
     assert skip is True
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_segment(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", (32, 32))
@@ -75,7 +68,7 @@ def test_segment(mock_run_segmentation, db):
     assert clean is not None
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_run_segmentation_uses_full_res_editor_background(mock_run_segmentation, db):
     """Masks must match Gradio's native background size, not a letterboxed canvas."""
     app = GradioApp(db=db)
@@ -97,7 +90,7 @@ def test_run_segmentation_uses_full_res_editor_background(mock_run_segmentation,
     assert int(np.array(result.editor_value["layers"][0])[:, :, 1].sum()) > 0
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_resegment_recovers_from_segment_key(mock_run_segmentation, db, tmp_path):
     app = GradioApp(db=db)
     img_path = tmp_path / "redo.png"
@@ -120,7 +113,7 @@ def test_resegment_recovers_from_segment_key(mock_run_segmentation, db, tmp_path
     assert out_key is not None
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_prepare_upload_segment_preserves_clean_source_on_empty_editor(mock_run_segmentation, db):
     app = GradioApp(db=db)
     clean = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(1, 2, 3))
@@ -166,7 +159,7 @@ def test_pipeline_source_prefers_clean_source_over_editor(db, tmp_path):
     assert app._pipeline_source(None, None, key).size == pristine.size
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_prepare_upload_segment_retries_after_empty_masks(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(10, 20, 30))
@@ -203,7 +196,7 @@ def test_prepare_upload_segment_retries_after_empty_masks(mock_run_segmentation,
     assert mock_run_segmentation.call_count == 2
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_prepare_upload_segment_skips_repeat(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", (32, 32), color=(10, 20, 30))
@@ -237,7 +230,7 @@ def test_prepare_upload_segment_skips_repeat(mock_run_segmentation, db):
     assert mock_run_segmentation.call_count == 1
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_prepare_upload_segment_resegments_when_masks_stale(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg_a = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(10, 20, 30))
@@ -279,7 +272,7 @@ def test_prepare_upload_segment_resegments_when_masks_stale(mock_run_segmentatio
     assert mock_run_segmentation.call_count == 2
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_load_example_after_select(mock_run_segmentation, db, tmp_path):
     app = GradioApp(db=db)
     img_path = tmp_path / "example.png"
@@ -308,7 +301,7 @@ def test_load_example_after_select(mock_run_segmentation, db, tmp_path):
     assert skip is True
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_prepare_upload_segment_skips_programmatic_load(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", (32, 32), color=(10, 20, 30))
@@ -343,7 +336,6 @@ def test_compose_generation_params_admin(db):
         user_prompt_addon="ignored",
         model_id=app.default_model,
         use_controlnet=False,
-        hand_protect=True,
         steps=40,
         guidance_scale=5.5,
         seed=42,
@@ -353,14 +345,13 @@ def test_compose_generation_params_admin(db):
     assert params["negative_prompt"] == "custom negative"
     assert params["model_id"] == app.default_model
     assert params["use_controlnet"] is False
-    assert params["hand_protect"] is True
     assert params["steps"] == 40
     assert params["seed"] == 42
 
 
-@patch("outfit_studio.ui.gradio_app.get_default_prompt", return_value="base outfit prompt")
+@patch("outfit_studio.ui.handlers.generation.get_default_prompt", return_value="base outfit prompt")
 @patch(
-    "outfit_studio.ui.gradio_app.get_default_negative_prompt",
+    "outfit_studio.ui.handlers.generation.get_default_negative_prompt",
     return_value="base negative",
 )
 def test_compose_generation_params_user_addon(mock_neg, mock_pos, db):
@@ -372,7 +363,6 @@ def test_compose_generation_params_user_addon(mock_neg, mock_pos, db):
         user_prompt_addon="red dress",
         model_id="other-model.safetensors",
         use_controlnet=False,
-        hand_protect=False,
         steps=10,
         guidance_scale=3.0,
         seed=1,
@@ -381,14 +371,13 @@ def test_compose_generation_params_user_addon(mock_neg, mock_pos, db):
     assert params["prompt"] == "red dress, base outfit prompt"
     assert params["negative_prompt"] == "base negative"
     assert params["model_id"] == app.default_model
-    assert params["use_controlnet"] == app.settings.use_controlnet
-    assert params["hand_protect"] == app.settings.hand_protect
-    assert params["steps"] == app.settings.inpaint_steps
+    assert params["use_controlnet"] == app.settings.content.use_controlnet
+    assert params["steps"] == app.settings.content.steps
 
 
-@patch("outfit_studio.ui.gradio_app.get_default_prompt", return_value="base outfit prompt")
+@patch("outfit_studio.ui.handlers.generation.get_default_prompt", return_value="base outfit prompt")
 @patch(
-    "outfit_studio.ui.gradio_app.get_default_negative_prompt",
+    "outfit_studio.ui.handlers.generation.get_default_negative_prompt",
     return_value="base negative",
 )
 def test_compose_generation_params_user_without_addon(mock_neg, mock_pos, db):
@@ -400,7 +389,6 @@ def test_compose_generation_params_user_without_addon(mock_neg, mock_pos, db):
         user_prompt_addon="",
         model_id="other-model.safetensors",
         use_controlnet=True,
-        hand_protect=True,
         steps=99,
         guidance_scale=9.0,
         seed=7,
@@ -410,7 +398,7 @@ def test_compose_generation_params_user_without_addon(mock_neg, mock_pos, db):
     assert params["model_id"] == app.default_model
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_prepare_upload_segment_runs_after_clear_despite_stale_suppress(mock_run_segmentation, db):
     """Clear resets suppress_upload_hook; new upload must segment even if flag was True."""
     app = GradioApp(db=db)
@@ -439,7 +427,7 @@ def test_prepare_upload_segment_runs_after_clear_despite_stale_suppress(mock_run
     assert mock_run_segmentation.call_count == 2
 
 
-@patch("outfit_studio.ui.gradio_app.run_segmentation")
+@patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
 def test_prepare_upload_segment_stale_suppress_same_key_still_skips(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(10, 20, 30))
@@ -461,8 +449,8 @@ def test_prepare_upload_segment_stale_suppress_same_key_still_skips(mock_run_seg
     assert mock_run_segmentation.call_count == 1
 
 
-@patch("outfit_studio.ui.gradio_app.get_inpaint_engine")
-@patch("outfit_studio.ui.gradio_app.time.sleep")
+@patch("outfit_studio.ui.handlers.generation.get_inpaint_engine")
+@patch("outfit_studio.ui.handlers.generation.time.sleep")
 def test_generate_waits_for_preload(mock_sleep, mock_get_engine, db):
     app = GradioApp(db=db)
     db.register_user(app.settings.default_admin, "password123", credits=10, is_admin=True)
@@ -485,7 +473,6 @@ def test_generate_waits_for_preload(mock_sleep, mock_get_engine, db):
             negative_prompt="bad",
             model_id=app.default_model,
             use_controlnet=False,
-            hand_protect=True,
             steps=24,
             guidance_scale=6.5,
             seed=42,

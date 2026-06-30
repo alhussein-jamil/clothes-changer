@@ -44,7 +44,7 @@ endif
 ifndef PASS
 	$(error Usage: make add-user USER=name PASS=password [CREDITS=10] [ADMIN=true])
 endif
-	$(PYTHON) scripts/add_user.py $(USER) $(PASS) \
+	$(PYTHON) -m outfit_studio.scripts.add_user $(USER) $(PASS) \
 		$(if $(CREDITS),--credits $(CREDITS),) \
 		$(if $(filter true yes 1,$(ADMIN)),--admin,)
 
