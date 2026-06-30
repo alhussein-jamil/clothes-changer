@@ -3,16 +3,15 @@ from outfit_studio.content_config import (
     get_app_name,
     get_default_inpaint_model,
     get_default_prompt,
-    get_title_html,
+    get_tagline,
 )
 
 
 def test_content_config_defaults(tmp_path, monkeypatch):
     default = tmp_path / "content.default.yaml"
     default.write_text(
-        "app:\n  name: Outfit Studio\n"
-        "prompts:\n  default: high quality clothing\n"
-        "ui:\n  title_html: '<h1>Outfit Studio</h1>'\n",
+        "app:\n  name: Outfit Studio\n  tagline: AI outfit inpainting\n"
+        "prompts:\n  default: high quality clothing\n",
         encoding="utf-8",
     )
     missing = tmp_path / "content.local.yaml"
@@ -22,8 +21,8 @@ def test_content_config_defaults(tmp_path, monkeypatch):
     clear_content_config_cache()
 
     assert get_app_name() == "Outfit Studio"
+    assert get_tagline() == "AI outfit inpainting"
     assert "clothing" in get_default_prompt().lower()
-    assert "Outfit Studio" in get_title_html()
 
 
 def test_content_config_local_override(tmp_path, monkeypatch):

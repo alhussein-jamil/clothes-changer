@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 import random
 from pathlib import Path
@@ -28,7 +29,7 @@ from outfit_studio.content_config import (
     get_app_name,
     get_default_negative_prompt,
     get_default_prompt,
-    get_title_html,
+    get_tagline,
 )
 from outfit_studio.db.database import Database
 from outfit_studio.ml.inpainter import get_inpaint_engine
@@ -66,51 +67,37 @@ class SegmentationResult(NamedTuple):
     debug_session_dir: str | None
 
 
-def _logo_dark_path(logo: Path) -> Path:
-    return logo.with_name(f"{logo.stem}-dark{logo.suffix}")
+def _header_title_block(name: str) -> str:
+    tagline = get_tagline().strip()
+    tagline_html = f'<p class="app-header-tagline">{html.escape(tagline)}</p>' if tagline else ""
+    return f'<div class="app-header-title"><h1>{html.escape(name)}</h1>{tagline_html}</div>'
+
+
+def _logo_image_style() -> str:
+    return (
+        f"max-width:min({UI.LOGO_MAX_WIDTH_PX}px,100%);"
+        f"height:auto;max-height:{UI.LOGO_MAX_HEIGHT_PX}px"
+    )
 
 
 def build_header_html(settings: Settings) -> str:
-    """Page header with wordmark logo from ``static/`` when available."""
+    """Page header with logo and app name."""
     logo = settings.resolved_logo_path
     name = get_app_name()
+    logo_style = _logo_image_style()
 
-    if logo.is_file():
-        logo_style = (
-            f"max-width:min({UI.LOGO_MAX_WIDTH_PX}px,100%);"
-            f"height:auto;max-height:{UI.LOGO_MAX_HEIGHT_PX}px"
-        )
-        if logo.suffix.lower() == ".svg":
-            # Gradio serves SVG via /file= as an attachment (XSS hardening), so
-            # browsers won't render it in <img>. Inline the markup instead.
-            parts = [
-                '<div class="app-header" style="text-align:center;padding:16px 0">',
-                (
-                    '<div class="app-header-logo app-header-logo--light">'
-                    f"{logo.read_text(encoding='utf-8').strip()}"
-                    "</div>"
-                ),
-            ]
-            dark_logo = _logo_dark_path(logo)
-            if dark_logo.is_file():
-                parts.append(
-                    '<div class="app-header-logo app-header-logo--dark">'
-                    f"{dark_logo.read_text(encoding='utf-8').strip()}"
-                    "</div>"
-                )
-            parts.append("</div>")
-            return "\n".join(parts)
-
-        return "\n".join(
-            [
-                '<div class="app-header" style="text-align:center;padding:16px 0">',
-                f'<img src="/file={logo}" alt="{name}" style="{logo_style}" />',
-                "</div>",
-            ]
-        )
-
-    custom = get_title_html()
-    return custom if custom else f"<h1>{name}</h1>"
+    return "\n".join(
+        [
+            '<div class="app-header">',
+            '<div class="app-header-brand">',
+            '<div class="app-header-logo-wrap">',
+            f'<img src="/file={logo}" alt="{html.escape(name)}" style="{logo_style}" />',
+            "</div>",
+            _header_title_block(name),
+            "</div>",
+            "</div>",
+        ]
+    )
 
 
 class GradioApp:
@@ -1153,11 +1140,7 @@ class GradioApp:
             PROJECT_ROOT / "examples",
         }
         logo = self.settings.resolved_logo_path
-        if logo.is_file():
-            paths.add(logo)
-            dark_logo = _logo_dark_path(logo)
-            if dark_logo.is_file():
-                paths.add(dark_logo)
+        paths.add(logo)
         favicon = self.settings.resolved_favicon_path
         if favicon.is_file():
             paths.add(favicon)

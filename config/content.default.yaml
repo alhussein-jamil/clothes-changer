@@ -29,11 +29,3 @@ pose:
   detection_threshold: 0.5
   keypoint_threshold: 0.3
   mode: balanced
-
-ui:
-  # Fallback header when static/outfit-studio-logo.svg is missing.
-  title_html: |
-    <div style="text-align:center;padding:16px 0">
-      <h1 style="margin:0;font-size:2em">Outfit Studio</h1>
-      <p style="margin:8px 0 0;color:#666">AI outfit inpainting</p>
-    </div>

@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     db_path: Path = Path("database.db")
     examples_dir: Path = Path("examples")
     favicon_path: Path = Path("static/favicon.ico")
-    logo_path: Path = Path("static/outfit-studio-logo.svg")
+    logo_path: Path = Path("static/outfit-studio-logo.png")
     enable_sharing: bool = False
     require_auth: bool = True
 

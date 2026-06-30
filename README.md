@@ -1,7 +1,7 @@
 # Outfit Studio
 
 <p align="center">
-  <img src="static/outfit-studio-logo.svg" alt="Outfit Studio logo" width="560" />
+  <img src="static/outfit-studio-logo.png" alt="Outfit Studio logo" width="160" />
 </p>
 
 ![Fantasy clothing transformation](docs/assets/fantasy-clothes-magic.png)

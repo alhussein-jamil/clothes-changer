@@ -83,10 +83,6 @@ def get_default_negative_prompt() -> str:
     return str(get_content_config().get("prompts", {}).get("negative", ""))
 
 
-def get_title_html() -> str:
-    return str(get_content_config().get("ui", {}).get("title_html", "")).strip()
-
-
 def get_default_inpaint_model() -> str:
     return str(_models().get("default_inpaint", "runwayml/stable-diffusion-inpainting"))
 

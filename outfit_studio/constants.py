@@ -92,29 +92,62 @@ class UI:
 
 CUSTOM_CSS = f"""
 .gradio-container {{ max-width: {UI.CSS_MAX_WIDTH_PX}px !important; margin: auto; }}
-#app-header, #app-header > div, #app-header .app-header {{
+#app-header {{
   display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
   width: 100% !important;
-  text-align: center !important;
+  padding: 16px 0 !important;
 }}
-#app-header img,
-#app-header .app-header-logo svg {{
+#app-header .app-header-brand {{
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 18px !important;
+  flex-wrap: wrap !important;
+}}
+#app-header .app-header-logo-wrap {{
+  flex: 0 0 auto !important;
+}}
+#app-header .app-header-title {{
+  flex: 0 1 auto !important;
+  text-align: left !important;
+}}
+#app-header .app-header-title h1 {{
+  margin: 0 !important;
+  font-size: 1.75rem !important;
+  font-weight: 700 !important;
+  line-height: 1.2 !important;
+  letter-spacing: -0.02em !important;
+  color: #172033 !important;
+}}
+.dark #app-header .app-header-title h1 {{
+  color: #e8eaed !important;
+}}
+#app-header .app-header-tagline {{
+  margin: 6px 0 0 !important;
+  font-size: 0.95rem !important;
+  line-height: 1.4 !important;
+  color: #5d6678 !important;
+}}
+.dark #app-header .app-header-tagline {{
+  color: #9aa0a8 !important;
+}}
+#app-header img {{
   display: block !important;
-  margin: 0 auto 12px !important;
+  margin: 0 !important;
   max-width: min({UI.LOGO_MAX_WIDTH_PX}px, 100%);
   height: auto;
   max-height: {UI.LOGO_MAX_HEIGHT_PX}px;
 }}
-#app-header .app-header-logo--dark {{
-  display: none;
-}}
-.dark #app-header .app-header-logo--light {{
-  display: none !important;
-}}
-.dark #app-header .app-header-logo--dark {{
-  display: block !important;
+@media (max-width: 520px) {{
+  #app-header .app-header-brand {{
+    flex-direction: column !important;
+  }}
+  #app-header .app-header-title {{
+    text-align: center !important;
+  }}
 }}
 """
 

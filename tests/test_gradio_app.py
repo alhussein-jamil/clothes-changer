@@ -17,14 +17,16 @@ def test_authenticate(db):
     assert not app.authenticate("user1", "wrong")
 
 
-def test_build_header_html_inlines_svg_logo():
+def test_build_header_html_uses_logo_image():
     settings = GradioApp().settings
-    html = build_header_html(settings)
-    assert settings.resolved_logo_path.suffix.lower() == ".svg"
-    assert "<svg" in html
-    assert 'src="/file=' not in html
-    assert "app-header-logo--light" in html
-    assert "app-header-logo--dark" in html
+    html_out = build_header_html(settings)
+    assert settings.resolved_logo_path.suffix.lower() == ".png"
+    assert 'src="/file=' in html_out
+    assert "outfit-studio-logo" in html_out
+    assert "<svg" not in html_out
+    assert "app-header-title" in html_out
+    assert "Outfit Studio" in html_out
+    assert "app-header-tagline" in html_out
 
 
 def _editor_value(update: dict) -> dict:
