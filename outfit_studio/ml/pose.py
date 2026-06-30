@@ -105,25 +105,20 @@ class PoseEstimator:
 
         logger.debug("Estimating pose for %d bbox(es)", len(bboxes))
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
         with torch.inference_mode():
             keypoints, scores = self._pose(img, bboxes=bboxes)
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
         return np.asarray(keypoints), np.asarray(scores)
 
-    def estimate(
+    def render_skeleton(
         self,
-        image: Image.Image,
-        bboxes: np.ndarray | None = None,
+        image_size: tuple[int, int],
+        keypoints: np.ndarray,
+        scores: np.ndarray,
     ) -> Image.Image:
         """OpenPose skeleton on black background for ControlNet conditioning."""
-        img = np.array(image.convert("RGB"))
-        keypoints, scores = self.estimate_keypoints(image, bboxes=bboxes)
-        canvas = np.zeros_like(img)
+        width, height = image_size
+        canvas = np.zeros((height, width, 3), dtype=np.uint8)
         pose_arr = draw_skeleton(
             canvas,
             keypoints,
@@ -133,6 +128,15 @@ class PoseEstimator:
         )
         logger.debug("Pose skeleton rendered %dx%d", pose_arr.shape[1], pose_arr.shape[0])
         return Image.fromarray(pose_arr)
+
+    def estimate(
+        self,
+        image: Image.Image,
+        bboxes: np.ndarray | None = None,
+    ) -> Image.Image:
+        """OpenPose skeleton on black background for ControlNet conditioning."""
+        keypoints, scores = self.estimate_keypoints(image, bboxes=bboxes)
+        return self.render_skeleton(image.size, keypoints, scores)
 
 
 @lru_cache

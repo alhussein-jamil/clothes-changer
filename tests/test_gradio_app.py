@@ -110,7 +110,9 @@ def test_resegment_recovers_from_segment_key(mock_run_segmentation, db, tmp_path
     mock_run_segmentation.return_value = (person, clothes, None)
 
     empty_editor = {"background": None, "layers": [], "composite": None}
-    editor_update, clean, out_key, skip, _ = app.resegment(empty_editor, None, key, None, None)
+    editor_update, clean, out_key, skip, _, _ = app.resegment(
+        empty_editor, None, key, None, None, None
+    )
     value = _editor_value(editor_update)
     assert np.array(value["layers"][0])[30, 30, 1] > 50
     assert skip is True
@@ -123,8 +125,8 @@ def test_prepare_upload_segment_preserves_clean_source_on_empty_editor(mock_run_
     app = GradioApp(db=db)
     clean = Image.new("RGB", EDITOR_CANVAS_SIZE, color=(1, 2, 3))
     empty_editor = {"background": None, "layers": [], "composite": None}
-    pending, out_clean, key, skip, _ = app.prepare_upload_segment(
-        empty_editor, "path:/tmp/x.png", clean, False, None, None
+    pending, out_clean, key, skip, _, _ = app.prepare_upload_segment(
+        empty_editor, "path:/tmp/x.png", clean, False, None, None, None
     )
     assert pending is None
     assert out_clean is clean
@@ -185,12 +187,16 @@ def test_prepare_upload_segment_retries_after_empty_masks(mock_run_segmentation,
         np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8),
         np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8),
     )
-    pending1, clean, key1, _, _ = app.prepare_upload_segment(editor, None, None, False, None, None)
+    pending1, clean, key1, _, _, _ = app.prepare_upload_segment(
+        editor, None, None, False, None, None, None
+    )
     assert pending1 is None
     assert key1 is not None
     assert mock_run_segmentation.call_count == 1
 
-    pending2, _, key2, skip2, _ = app.prepare_upload_segment(editor, key1, clean, False, None, None)
+    pending2, _, key2, skip2, _, _ = app.prepare_upload_segment(
+        editor, key1, clean, False, None, None, None
+    )
     assert pending2 is not None
     assert key2 is not None
     assert skip2 is True
@@ -211,7 +217,9 @@ def test_prepare_upload_segment_skips_repeat(mock_run_segmentation, db):
         np.zeros((32, 32), dtype=np.uint8),
         np.zeros((32, 32), dtype=np.uint8),
     )
-    pending, clean, key, skip, _ = app.prepare_upload_segment(editor, None, None, False, None, None)
+    pending, clean, key, skip, _, _ = app.prepare_upload_segment(
+        editor, None, None, False, None, None, None
+    )
     assert pending is not None
     assert clean is not None
     assert key is not None
@@ -220,8 +228,8 @@ def test_prepare_upload_segment_skips_repeat(mock_run_segmentation, db):
     assert np.array(pending["layers"][0]).shape == (32, 32, 4)
 
     masked_editor = apply_masks_to_editor(bg, person, clothes)
-    pending2, _, same_key, skip2, _ = app.prepare_upload_segment(
-        masked_editor, key, clean, False, None, None
+    pending2, _, same_key, skip2, _, _ = app.prepare_upload_segment(
+        masked_editor, key, clean, False, None, None, None
     )
     assert pending2 is None
     assert same_key == key
@@ -248,22 +256,24 @@ def test_prepare_upload_segment_resegments_when_masks_stale(mock_run_segmentatio
         np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8),
         np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8),
     )
-    pending, clean, key_a, _, _ = app.prepare_upload_segment(
-        editor_a, None, None, False, None, None
+    pending, clean, key_a, _, _, _ = app.prepare_upload_segment(
+        editor_a, None, None, False, None, None, None
     )
     assert pending is not None
     assert mock_run_segmentation.call_count == 1
 
     masked_a = apply_masks_to_editor(bg_a, person, clothes)
-    pending2, _, same_key, _, _ = app.prepare_upload_segment(
-        masked_a, key_a, clean, False, None, None
+    pending2, _, same_key, _, _, _ = app.prepare_upload_segment(
+        masked_a, key_a, clean, False, None, None, None
     )
     assert pending2 is None
     assert same_key == key_a
     assert mock_run_segmentation.call_count == 1
 
     masked_b = apply_masks_to_editor(bg_b, person, clothes)
-    pending3, _, key_b, _, _ = app.prepare_upload_segment(masked_b, key_a, clean, False, None, None)
+    pending3, _, key_b, _, _, _ = app.prepare_upload_segment(
+        masked_b, key_a, clean, False, None, None, None
+    )
     assert pending3 is not None
     assert key_b != key_a
     assert mock_run_segmentation.call_count == 2
@@ -290,7 +300,7 @@ def test_load_example_after_select(mock_run_segmentation, db, tmp_path):
         "layers": [],
         "composite": None,
     }
-    editor_update, clean, key, skip, _ = app.load_example_after_select(editor, 0, None, None)
+    editor_update, clean, key, skip, _, _ = app.load_example_after_select(editor, 0, None, None)
     value = _editor_value(editor_update)
     assert np.array(value["layers"][0])[150, 150, 1] > 50
     assert clean is not None
@@ -306,7 +316,9 @@ def test_prepare_upload_segment_skips_programmatic_load(mock_run_segmentation, d
         bg, np.zeros((32, 32), dtype=np.uint8), np.zeros((32, 32), dtype=np.uint8)
     )
     key = background_key_from_image(bg)
-    pending, clean, out_key, skip, _ = app.prepare_upload_segment(editor, key, bg, True, None, None)
+    pending, clean, out_key, skip, _, _ = app.prepare_upload_segment(
+        editor, key, bg, True, None, None, None
+    )
     assert pending is None
     assert clean is bg
     assert out_key == key
@@ -316,7 +328,9 @@ def test_prepare_upload_segment_skips_programmatic_load(mock_run_segmentation, d
 
 def test_clear_editor_state_resets_suppress_upload_hook(db):
     app = GradioApp(db=db)
-    assert app.clear_editor_state() == (None, None, False, None)
+    cleared = app.clear_editor_state()
+    assert cleared[:4] == (None, None, False, None)
+    assert cleared[4] is None
 
 
 def test_compose_generation_params_admin(db):
@@ -408,14 +422,16 @@ def test_prepare_upload_segment_runs_after_clear_despite_stale_suppress(mock_run
     mock_run_segmentation.return_value = (person, clothes, None)
 
     masked_old = apply_masks_to_editor(bg_old, person, clothes)
-    _, clean, key_old, _, _ = app.prepare_upload_segment(masked_old, None, None, False, None, None)
+    _, clean, key_old, _, _, _ = app.prepare_upload_segment(
+        masked_old, None, None, False, None, None, None
+    )
     assert mock_run_segmentation.call_count == 1
 
     # New upload with stale skip flag but different image must still segment
     empty = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
     editor_new = apply_masks_to_editor(bg_new, empty, empty)
-    pending, out_clean, key_new, skip, _ = app.prepare_upload_segment(
-        editor_new, key_old, clean, True, None, None
+    pending, out_clean, key_new, skip, _, _ = app.prepare_upload_segment(
+        editor_new, key_old, clean, True, None, None, None
     )
     assert pending is not None
     assert key_new != key_old
@@ -434,9 +450,11 @@ def test_prepare_upload_segment_stale_suppress_same_key_still_skips(mock_run_seg
 
     empty = np.zeros(EDITOR_CANVAS_SIZE[::-1], dtype=np.uint8)
     editor = apply_masks_to_editor(bg, empty, empty)
-    _, clean, key, _, _ = app.prepare_upload_segment(editor, None, None, False, None, None)
+    _, clean, key, _, _, _ = app.prepare_upload_segment(editor, None, None, False, None, None, None)
     masked = apply_masks_to_editor(bg, person, clothes)
-    pending, _, same_key, skip, _ = app.prepare_upload_segment(masked, key, clean, True, None, None)
+    pending, _, same_key, skip, _, _ = app.prepare_upload_segment(
+        masked, key, clean, True, None, None, None
+    )
     assert pending is None
     assert same_key == key
     assert skip is True

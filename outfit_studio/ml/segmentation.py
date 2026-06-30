@@ -37,9 +37,9 @@ def run_segmentation(
         seg_debug.metadata.update(
             {
                 "username": username,
-                "segformer_model": settings.segformer_model,
-                "u2net_model": settings.extra_clothes_model,
+                "human_parser_model": settings.human_parser_model,
                 "image_size": list(image.size),
+                "clothes_confidence": settings.segmentation_clothes_confidence,
             }
         )
         seg_debug.save_image("00_source.png", image)

@@ -68,11 +68,6 @@ def inpaint_checkpoint_valid(path: Path) -> bool:
     return False
 
 
-def cloth_segm_checkpoint_valid(path: Path) -> bool:
-    """Return whether *path* is a loadable U2NET cloth segmentation weights file."""
-    return _pickle_checkpoint_readable(path)
-
-
 def is_hub_model_id(model_id: str) -> bool:
     """Return True for Hugging Face repo ids (e.g. ``org/model``)."""
     if model_id.endswith((".safetensors", ".ckpt")):

@@ -71,6 +71,10 @@ def _hands() -> dict[str, Any]:
     return _section("hands")
 
 
+def _segmentation() -> dict[str, Any]:
+    return _section("segmentation")
+
+
 def get_app_name() -> str:
     return str(get_content_config().get("app", {}).get("name", "Outfit Studio"))
 
@@ -91,12 +95,14 @@ def get_default_inpaint_model() -> str:
     return str(_models().get("default_inpaint", "runwayml/stable-diffusion-inpainting"))
 
 
-def get_segformer_model() -> str:
-    return str(_models().get("segformer", "mattmdjaga/segformer_b2_clothes"))
-
-
-def get_extra_clothes_model() -> str:
-    return str(_models().get("extra_clothes", "cloth_segm.pth"))
+def get_human_parser_model() -> str:
+    models = _models()
+    if "human_parser" in models:
+        return str(models["human_parser"])
+    if "segformer" in models:
+        logger.warning("models.segformer is deprecated; rename to models.human_parser")
+        return str(models["segformer"])
+    return "fashn-ai/fashn-human-parser"
 
 
 def get_controlnet_model() -> str:
@@ -137,6 +143,18 @@ def get_hand_protect() -> bool:
 
 def get_hand_padding_ratio() -> float:
     return float(_hands().get("padding_ratio", 0.35))
+
+
+def get_segmentation_clothes_confidence() -> float:
+    from outfit_studio.constants import SEGMENTATION_CLOTHES_CONFIDENCE
+
+    return float(_segmentation().get("clothes_confidence", SEGMENTATION_CLOTHES_CONFIDENCE))
+
+
+def get_segmentation_min_component_area() -> int:
+    from outfit_studio.constants import SEGMENTATION_MIN_COMPONENT_AREA
+
+    return int(_segmentation().get("min_component_area", SEGMENTATION_MIN_COMPONENT_AREA))
 
 
 def get_checkpoint_urls() -> dict[str, str]:

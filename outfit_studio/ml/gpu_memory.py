@@ -30,7 +30,7 @@ _MODEL_LOAD_LOCK = threading.Lock()
 
 @contextmanager
 def model_load_lock():
-    """Serialize heavy checkpoint loads (diffusers + U2NET share PyTorch meta-device state)."""
+    """Serialize heavy checkpoint loads (diffusers + human parser share meta-device state)."""
     with _MODEL_LOAD_LOCK:
         yield
 
@@ -138,7 +138,7 @@ def prepare_for_inpaint() -> None:
 
 
 def prefer_cpu_for_segmentation() -> bool:
-    """Keep SegFormer/U2NET on CPU only when the card cannot fit seg + inpaint.
+    """Keep the human parser on CPU only when the card cannot fit seg + inpaint.
 
     Uses total VRAM capacity, not transient free memory (inpaint may be loaded
     while the user re-segments). Segmentation stays on GPU whenever the card

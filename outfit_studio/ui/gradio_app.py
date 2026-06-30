@@ -186,9 +186,24 @@ class GradioApp:
         segment_key: str | None,
         suppress_hook: bool,
         debug_session_dir: str | None,
-    ) -> tuple[None, Image.Image | None, str | None, bool, str | None]:
+        segment_masks: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> tuple[
+        None,
+        Image.Image | None,
+        str | None,
+        bool,
+        str | None,
+        tuple[np.ndarray, np.ndarray] | None,
+    ]:
         """Session fields when segmentation is skipped; editor is applied in a later step."""
-        return None, clean_source, segment_key, suppress_hook, debug_session_dir
+        return (
+            None,
+            clean_source,
+            segment_key,
+            suppress_hook,
+            debug_session_dir,
+            segment_masks,
+        )
 
     @staticmethod
     def _segment_state_result(
@@ -196,9 +211,18 @@ class GradioApp:
         clean: Image.Image,
         key: str,
         debug_session_dir: str | None,
-    ) -> tuple[dict, Image.Image, str, bool, str | None]:
+        person: np.ndarray,
+        clothes: np.ndarray,
+    ) -> tuple[dict, Image.Image, str, bool, str | None, tuple[np.ndarray, np.ndarray]]:
         """Session fields after segmentation; suppress is set before the editor is pushed."""
-        return editor_value, clean, key, True, debug_session_dir
+        return (
+            editor_value,
+            clean,
+            key,
+            True,
+            debug_session_dir,
+            (person.copy(), clothes.copy()),
+        )
 
     @staticmethod
     def _apply_pending_editor(pending: dict | None) -> dict:
@@ -267,7 +291,15 @@ class GradioApp:
         suppress_upload_hook: bool,
         request: gr.Request,
         debug_session_dir: str | None,
-    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
+        segment_masks: tuple[np.ndarray, np.ndarray] | None,
+    ) -> tuple[
+        dict | None,
+        Image.Image | None,
+        str | None,
+        bool,
+        str | None,
+        tuple[np.ndarray, np.ndarray] | None,
+    ]:
         """Segment on upload and push masks straight into the ImageEditor."""
         bind_request(request)
         username = self._session_username(request) or self.settings.default_admin
@@ -279,15 +311,21 @@ class GradioApp:
 
         if action is UploadSegmentAction.SKIP_NO_BACKGROUND:
             logger.warning("prepare_upload_segment: no editor background yet")
-            return self._segment_state_skip(clean_source, segment_key, False, debug_session_dir)
+            return self._segment_state_skip(
+                clean_source, segment_key, False, debug_session_dir, segment_masks
+            )
 
         if action is UploadSegmentAction.SKIP_PROGRAMMATIC:
             logger.info("prepare_upload_segment: skipped — programmatic update")
-            return self._segment_state_skip(clean_source, segment_key, True, debug_session_dir)
+            return self._segment_state_skip(
+                clean_source, segment_key, True, debug_session_dir, segment_masks
+            )
 
         if action is UploadSegmentAction.SKIP_MASKS_PRESENT:
             logger.info("prepare_upload_segment: skipped — masks already on editor")
-            return self._segment_state_skip(clean or clean_source, key, True, debug_session_dir)
+            return self._segment_state_skip(
+                clean or clean_source, key, True, debug_session_dir, segment_masks
+            )
 
         logger.info(
             "prepare_upload_segment: running segmentation on %sx%s image",
@@ -302,7 +340,9 @@ class GradioApp:
             debug_session_dir=debug_session_dir,
         )
         if result is None:
-            return self._segment_state_skip(clean_source, segment_key, False, debug_session_dir)
+            return self._segment_state_skip(
+                clean_source, segment_key, False, debug_session_dir, segment_masks
+            )
         if not masks_have_pixels(result.person, result.clothes):
             logger.warning("prepare_upload_segment: empty segment output for %s", key)
             return self._segment_state_skip(
@@ -310,6 +350,7 @@ class GradioApp:
                 key,
                 False,
                 result.debug_session_dir,
+                segment_masks,
             )
 
         return self._segment_state_result(
@@ -317,6 +358,8 @@ class GradioApp:
             result.pipeline_clean,
             key,
             result.debug_session_dir,
+            result.person,
+            result.clothes,
         )
 
     def sync_clean_source(
@@ -507,7 +550,9 @@ class GradioApp:
         editor: dict | None = None,
         username: str | None = None,
         debug_session_dir: str | None = None,
-    ) -> tuple[dict, Image.Image, str, bool, str | None] | None:
+    ) -> (
+        tuple[dict, Image.Image, str, bool, str | None, tuple[np.ndarray, np.ndarray] | None] | None
+    ):
         """Segment a file-backed or gallery image; suppress the follow-up upload hook."""
         if editor is None or load_editor_clean_image(editor) is None:
             editor = {
@@ -529,7 +574,14 @@ class GradioApp:
             if source_path
             else background_key_from_image(result.pipeline_clean)
         )
-        return result.editor_value, result.pipeline_clean, key, True, result.debug_session_dir
+        return (
+            result.editor_value,
+            result.pipeline_clean,
+            key,
+            True,
+            result.debug_session_dir,
+            (result.person.copy(), result.clothes.copy()),
+        )
 
     def resegment(
         self,
@@ -538,7 +590,15 @@ class GradioApp:
         last_key: str | None,
         request: gr.Request,
         debug_session_dir: str | None,
-    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
+        segment_masks: tuple[np.ndarray, np.ndarray] | None,
+    ) -> tuple[
+        dict | None,
+        Image.Image | None,
+        str | None,
+        bool,
+        str | None,
+        tuple[np.ndarray, np.ndarray] | None,
+    ]:
         """Force re-segmentation (Redo button) — replaces mask layer, never stacks."""
         bind_request(request)
         logger.info("resegment: replacing existing mask layer")
@@ -559,13 +619,17 @@ class GradioApp:
             debug_session_dir=debug_session_dir,
         )
         if result is None:
-            return self._segment_state_skip(clean_source, last_key, False, debug_session_dir)
+            return self._segment_state_skip(
+                clean_source, last_key, False, debug_session_dir, segment_masks
+            )
         key = background_key_from_image(result.pipeline_clean) if clean is not None else last_key
         return self._segment_state_result(
             result.editor_value,
             result.pipeline_clean,
             key,
             result.debug_session_dir,
+            result.person,
+            result.clothes,
         )
 
     def segment_after_example(
@@ -596,8 +660,37 @@ class GradioApp:
             result.editor_value, result.pipeline_clean, key, result.debug_session_dir
         )
 
-    def clear_editor_state(self) -> tuple[None, None, bool, None]:
-        return EditorSession().cleared_fields()
+    @staticmethod
+    def _example_load_skip(
+        clean_source: Image.Image | None,
+        segment_key: str | None,
+        suppress_hook: bool,
+        debug_session_dir: str | None,
+    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None, None]:
+        return (
+            gr.update(),
+            clean_source,
+            segment_key,
+            suppress_hook,
+            debug_session_dir,
+            None,
+        )
+
+    def _example_load_result(
+        self,
+        value: dict,
+        clean: Image.Image,
+        key: str,
+        debug_session_dir: str | None,
+        masks: tuple[np.ndarray, np.ndarray],
+    ) -> tuple[dict, Image.Image, str, bool, str | None, tuple[np.ndarray, np.ndarray]]:
+        editor_update, *session_fields = self._editor_update(value, clean, key, debug_session_dir)
+        return editor_update, *session_fields, masks
+
+    def clear_editor_state(
+        self,
+    ) -> tuple[None, None, bool, None, None]:
+        return (*EditorSession().cleared_fields(), None)
 
     @staticmethod
     def _store_example_index(evt: gr.SelectData) -> int | None:
@@ -609,7 +702,14 @@ class GradioApp:
         index: int | None,
         request: gr.Request,
         debug_session_dir: str | None,
-    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
+    ) -> tuple[
+        dict,
+        Image.Image | None,
+        str | None,
+        bool,
+        str | None,
+        tuple[np.ndarray, np.ndarray] | None,
+    ]:
         """Segment after gr.Examples has populated the ImageEditor."""
         bind_request(request)
         logger.info("load_example_after_select: index=%s", index)
@@ -629,20 +729,28 @@ class GradioApp:
                     debug_session_dir=debug_session_dir,
                 )
                 if loaded is None:
-                    return self._editor_skip(None, None, True, debug_session_dir)
-                value, clean, key, _, new_debug_dir = loaded
-                return self._editor_update(value, clean, key, new_debug_dir)
-        return self.segment_after_example(editor, request, debug_session_dir)
+                    return self._example_load_skip(None, None, True, debug_session_dir)
+                value, clean, key, _, new_debug_dir, masks = loaded
+                return self._example_load_result(value, clean, key, new_debug_dir, masks)
+        seg_result = self.segment_after_example(editor, request, debug_session_dir)
+        return (*seg_result, None)
 
     def use_result_as_input(
         self,
         slider_val: tuple | None,
         request: gr.Request,
         debug_session_dir: str | None,
-    ) -> tuple[dict, Image.Image | None, str | None, bool, str | None]:
+    ) -> tuple[
+        dict,
+        Image.Image | None,
+        str | None,
+        bool,
+        str | None,
+        tuple[np.ndarray, np.ndarray] | None,
+    ]:
         bind_request(request)
         if not slider_val:
-            return gr.update(), None, None, False, debug_session_dir
+            return self._example_load_skip(None, None, False, debug_session_dir)
         debug_session_dir = self._effective_debug_dir(request, debug_session_dir)
         username = self._session_username(request) or self.settings.default_admin
         _, after = slider_val
@@ -653,9 +761,9 @@ class GradioApp:
             debug_session_dir=debug_session_dir,
         )
         if loaded is None:
-            return self._editor_skip(None, None, False, debug_session_dir)
-        value, clean, key, _, new_debug_dir = loaded
-        return self._editor_update(value, clean, key, new_debug_dir)
+            return self._example_load_skip(None, None, False, debug_session_dir)
+        value, clean, key, _, new_debug_dir, masks = loaded
+        return self._example_load_result(value, clean, key, new_debug_dir, masks)
 
     def generate(
         self,
@@ -1013,6 +1121,7 @@ class GradioApp:
                             resegment_btn = gr.Button("Redo Clothes Segmentation", size="sm")
                             clean_source = gr.State(value=None)
                             segment_key = gr.State(value=None)
+                            segment_masks = gr.State(value=None)
                             suppress_upload_hook = gr.State(value=False)
                             pending_editor = gr.State(value=None)
                             debug_session_dir = gr.State(value=None)
@@ -1163,6 +1272,7 @@ class GradioApp:
                     clean_source,
                     suppress_upload_hook,
                     debug_session_dir,
+                    segment_masks,
                 ],
                 outputs=[
                     pending_editor,
@@ -1170,6 +1280,7 @@ class GradioApp:
                     segment_key,
                     suppress_upload_hook,
                     debug_session_dir,
+                    segment_masks,
                 ],
             ).then(
                 self._apply_pending_editor,
@@ -1187,7 +1298,13 @@ class GradioApp:
             input_image.clear(
                 self.clear_editor_state,
                 None,
-                [clean_source, segment_key, suppress_upload_hook, debug_session_dir],
+                [
+                    clean_source,
+                    segment_key,
+                    suppress_upload_hook,
+                    debug_session_dir,
+                    segment_masks,
+                ],
             )
             resegment_btn.click(
                 self._begin_operation,
@@ -1195,13 +1312,14 @@ class GradioApp:
                 action_buttons,
             ).then(
                 self.resegment,
-                [input_image, clean_source, segment_key, debug_session_dir],
+                [input_image, clean_source, segment_key, debug_session_dir, segment_masks],
                 [
                     pending_editor,
                     clean_source,
                     segment_key,
                     suppress_upload_hook,
                     debug_session_dir,
+                    segment_masks,
                 ],
             ).then(
                 self._apply_pending_editor,
@@ -1282,7 +1400,14 @@ class GradioApp:
             ).then(
                 self.use_result_as_input,
                 [result, debug_session_dir],
-                [input_image, clean_source, segment_key, suppress_upload_hook, debug_session_dir],
+                [
+                    input_image,
+                    clean_source,
+                    segment_key,
+                    suppress_upload_hook,
+                    debug_session_dir,
+                    segment_masks,
+                ],
             ).then(
                 self._end_operation,
                 None,
@@ -1307,6 +1432,7 @@ class GradioApp:
                         segment_key,
                         suppress_upload_hook,
                         debug_session_dir,
+                        segment_masks,
                     ],
                 ).then(
                     self._debug_status_update,
@@ -1359,6 +1485,7 @@ class GradioApp:
         if static_dir.is_dir():
             gr.set_static_paths(paths=[static_dir])
         demo = self.create_ui()
+        demo.queue(default_concurrency_limit=1)
         favicon = (
             self.settings.resolved_favicon_path
             if self.settings.resolved_favicon_path.is_file()

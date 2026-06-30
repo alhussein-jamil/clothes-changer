@@ -89,12 +89,8 @@ class Settings(BaseSettings):
         return content_config.get_default_inpaint_model()
 
     @property
-    def extra_clothes_model(self) -> str:
-        return content_config.get_extra_clothes_model()
-
-    @property
-    def segformer_model(self) -> str:
-        return content_config.get_segformer_model()
+    def human_parser_model(self) -> str:
+        return content_config.get_human_parser_model()
 
     @property
     def detection_threshold(self) -> float:
@@ -115,6 +111,14 @@ class Settings(BaseSettings):
     @property
     def hand_padding_ratio(self) -> float:
         return content_config.get_hand_padding_ratio()
+
+    @property
+    def segmentation_clothes_confidence(self) -> float:
+        return content_config.get_segmentation_clothes_confidence()
+
+    @property
+    def segmentation_min_component_area(self) -> int:
+        return content_config.get_segmentation_min_component_area()
 
     @property
     def inpaint_steps(self) -> int:

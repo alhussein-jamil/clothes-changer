@@ -67,8 +67,7 @@ def test_ml_defaults_from_yaml(tmp_path, monkeypatch):
     default.write_text(
         "models:\n"
         "  default_inpaint: custom.safetensors\n"
-        "  segformer: org/segformer\n"
-        "  extra_clothes: u2net.pth\n"
+        "  human_parser: org/human-parser\n"
         "  controlnet: org/controlnet\n"
         "generation:\n"
         "  use_controlnet: false\n"
@@ -90,19 +89,17 @@ def test_ml_defaults_from_yaml(tmp_path, monkeypatch):
     from outfit_studio.content_config import (
         get_controlnet_model,
         get_detection_threshold,
-        get_extra_clothes_model,
         get_guidance_scale,
+        get_human_parser_model,
         get_inference_size,
         get_inpaint_steps,
         get_pose_keypoint_threshold,
         get_pose_mode,
-        get_segformer_model,
         get_use_controlnet,
     )
 
     assert get_default_inpaint_model() == "custom.safetensors"
-    assert get_segformer_model() == "org/segformer"
-    assert get_extra_clothes_model() == "u2net.pth"
+    assert get_human_parser_model() == "org/human-parser"
     assert get_controlnet_model() == "org/controlnet"
     assert get_use_controlnet() is False
     assert get_inpaint_steps() == 30

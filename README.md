@@ -19,7 +19,7 @@ disabled.
 
 - Serves a Gradio UI with login, credits, examples, history, and an ImageEditor mask
   workflow.
-- Uses SegFormer B2 plus U2NET to build person and clothing masks automatically.
+- Uses the FASHN Human Parser (SegFormer B4) to build person and clothing masks automatically.
 - Lets users repaint masks before generation, so the model changes only intended
   clothing regions.
 - Runs Diffusers inpainting with SD1.5, SDXL, or local `.safetensors` / `.ckpt`
@@ -152,7 +152,7 @@ custom `.safetensors` checkpoints and download URLs.
 | Component | Technology |
 |-----------|------------|
 | UI | Gradio 4 + ImageSlider |
-| Segmentation | SegFormer B2 + U2NET |
+| Segmentation | FASHN Human Parser (SegFormer B4) |
 | Pose, optional | rtmlib ONNX + ControlNet OpenPose |
 | Inpainting | Diffusers SD1.5 / SDXL inpaint |
 | Auth/history | SQLite + Argon2 |

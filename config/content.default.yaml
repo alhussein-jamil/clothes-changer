@@ -14,14 +14,17 @@ prompts:
 models:
   # Hugging Face SD1.5 inpaint — works without a local checkpoint file.
   default_inpaint: runwayml/stable-diffusion-inpainting
-  segformer: mattmdjaga/segformer_b2_clothes
-  extra_clothes: cloth_segm.pth
+  human_parser: fashn-ai/fashn-human-parser
   controlnet: lllyasviel/sd-controlnet-openpose
+
+segmentation:
+  clothes_confidence: 0.15
+  min_component_area: 32
 
 generation:
   use_controlnet: true
-  steps: 50
-  guidance_scale: 6.5
+  steps: 40
+  guidance_scale: 10.0
   inference_size: 512
 
 pose:

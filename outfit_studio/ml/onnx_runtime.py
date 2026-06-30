@@ -112,7 +112,3 @@ def resolve_onnx_device() -> str:
                 "Run `make install-fast` to install CUDA 12 libs for ORT.",
             )
             return "cpu"
-
-
-def clear_onnx_device_cache() -> None:
-    resolve_onnx_device.cache_clear()

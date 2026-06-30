@@ -35,6 +35,7 @@ from outfit_studio.utils.image import (
     apply_reflection_padding,
     blend_images_with_enhancements,
     composite_crop_onto,
+    get_bounding_box,
     get_crop_info,
     prepare_instance_masks,
     remove_reflection_padding,
@@ -48,6 +49,15 @@ ProgressCallback = Callable[[float, str], None]
 
 def _noop_progress(_fraction: float, _desc: str) -> None:
     pass
+
+
+def _bbox_from_mask(mask: np.ndarray) -> np.ndarray:
+    """Single xyxy bbox covering foreground in a binary mask."""
+    top, left, bottom, right = get_bounding_box((mask > 0).astype(np.uint8))
+    if bottom <= top or right <= left:
+        h, w = mask.shape[:2]
+        return np.array([[0, 0, w, h]], dtype=np.float32)
+    return np.array([[left, top, right, bottom]], dtype=np.float32)
 
 
 def _scoped_progress(
@@ -94,11 +104,8 @@ class GenerationPipeline:
         sub = _scoped_progress(report, progress_span, prefix)
 
         sub(PersonProgress.PREP, "Preparing region")
-        clothes_alpha = Image.fromarray((clothes_mask * MASK_ON).astype(np.uint8))
-        person_alpha = Image.fromarray((person_mask * MASK_ON).astype(np.uint8))
-
-        person_binary = person_alpha.point(lambda p: MASK_ON if p > 0 else 0)
-        clothes_binary = clothes_alpha.point(lambda p: MASK_ON if p > 0 else 0)
+        person_binary = Image.fromarray((person_mask > 0).astype(np.uint8) * MASK_ON, mode="L")
+        clothes_binary = Image.fromarray((clothes_mask > 0).astype(np.uint8) * MASK_ON, mode="L")
         combined_mask = Image.new("L", full_image.size, 0)
         combined_mask.paste(person_binary, (0, 0))
         combined_mask.paste(clothes_binary, (0, 0), clothes_binary)
@@ -118,8 +125,8 @@ class GenerationPipeline:
             crop_info["bottom"],
         )
         cropped_image = full_image.crop(crop_box)
-        cropped_clothes = clothes_alpha.crop(crop_box)
-        cropped_person_mask = person_alpha.crop(crop_box)
+        cropped_clothes = clothes_binary.crop(crop_box)
+        cropped_person_mask = person_binary.crop(crop_box)
 
         target_size = max(cropped_image.size)
         if cropped_image.size[0] != cropped_image.size[1]:
@@ -135,7 +142,10 @@ class GenerationPipeline:
             padding_info = None
 
         cnet_image = padded_image.copy()
-        binary_mask = padded_mask.point(lambda p: MASK_ON if p > 0 else 0)
+        binary_mask = Image.fromarray(
+            ((np.array(padded_mask) > 0).astype(np.uint8) * MASK_ON),
+            mode="L",
+        )
         cnet_image.paste(0, (0, 0), binary_mask)
         cnet_image = cnet_image.convert("RGB")
 
@@ -151,12 +161,27 @@ class GenerationPipeline:
             and cnet_image.height >= MIN_POSE_IMAGE_SIDE
         ):
             sub(PersonProgress.POSE_DETECT, "Detecting pose")
-            bboxes = pose_est.get_bboxes(cnet_image)
-            logger.debug("Pose bboxes for crop: %d", len(bboxes))
+            combined_crop = (np.array(cropped_person_mask) > 0) | (np.array(cropped_clothes) > 0)
+            if padding_info is not None:
+                combined_pil = Image.fromarray(combined_crop.astype(np.uint8) * MASK_ON, mode="L")
+                combined_padded, _ = apply_reflection_padding(
+                    combined_pil,
+                    (target_size, target_size),
+                    center=crop_info["center"],
+                )
+                pose_region = np.array(combined_padded) > 0
+            else:
+                pose_region = combined_crop
+            bboxes = _bbox_from_mask(pose_region.astype(np.uint8))
+            logger.debug("Pose bbox from segmentation mask")
             pose_keypoints, pose_scores = pose_est.estimate_keypoints(cnet_image, bboxes=bboxes)
             if use_controlnet:
                 sub(PersonProgress.POSE_GUIDE, "Building ControlNet guide")
-                control_image = pose_est.estimate(cnet_image, bboxes=bboxes)
+                control_image = pose_est.render_skeleton(
+                    cnet_image.size,
+                    pose_keypoints,
+                    pose_scores,
+                )
         elif need_pose:
             logger.warning(
                 "Skipping pose for degenerate crop %dx%d",
@@ -433,9 +458,6 @@ class GenerationPipeline:
 
         pose_est.unload()
         free_cuda_cache()
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
         report_checked(GenerateProgress.SAVE, "Saving result")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

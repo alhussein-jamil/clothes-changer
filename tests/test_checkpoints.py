@@ -5,7 +5,6 @@ from safetensors.torch import save_file
 
 from outfit_studio.ml.checkpoints import (
     checkpoint_architecture,
-    cloth_segm_checkpoint_valid,
     inpaint_checkpoint_valid,
     is_hub_model_id,
     is_sdxl_checkpoint,
@@ -40,9 +39,3 @@ def test_sdxl_architecture_from_tensor_keys(tmp_path: Path):
     save_file({"conditioner.embedders.0.weight": torch.zeros(1)}, path)
     assert is_sdxl_checkpoint("custom.safetensors", path)
     assert checkpoint_architecture("custom.safetensors", path) == "sdxl"
-
-
-def test_cloth_segm_checkpoint_valid(tmp_path: Path):
-    path = tmp_path / "cloth_segm.pth"
-    torch.save({"stage1.weight": torch.zeros(1)}, path)
-    assert cloth_segm_checkpoint_valid(path)

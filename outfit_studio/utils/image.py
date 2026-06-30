@@ -39,17 +39,21 @@ def mask_overlay(
     clothes_color: tuple[int, int, int, int] = UI.CLOTHES_COLOR,
 ) -> Image.Image:
     """RGBA overlay for editor preview."""
-    base = image.convert("RGBA")
-    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    px = overlay.load()
-    h, w = person_mask.shape
-    for y in range(h):
-        for x in range(w):
-            if clothes_mask[y, x]:
-                px[x, y] = clothes_color
-            elif person_mask[y, x]:
-                px[x, y] = person_color
-    return Image.alpha_composite(base, overlay)
+    base = np.array(image.convert("RGBA"))
+    overlay = np.zeros_like(base)
+    person_on = person_mask > 0
+    clothes_on = clothes_mask > 0
+    overlay[person_on] = person_color
+    overlay[clothes_on] = clothes_color
+    alpha = overlay[:, :, 3:4].astype(np.float32) / 255.0
+    blended = (
+        base[:, :, :3].astype(np.float32) * (1.0 - alpha)
+        + overlay[:, :, :3].astype(np.float32) * alpha
+    )
+    out = np.empty_like(base)
+    out[:, :, :3] = blended.astype(np.uint8)
+    out[:, :, 3] = np.maximum(base[:, :, 3], overlay[:, :, 3])
+    return Image.fromarray(out, mode="RGBA")
 
 
 def get_bounding_box(mask: NDArray[np.uint8]) -> tuple[int, int, int, int]:
@@ -121,19 +125,12 @@ def apply_reflection_padding(
         adjusted_padding_top = int((new_height - scaled_height) * center_y_ratio)
         adjusted_padding_bottom = new_height - scaled_height - adjusted_padding_top
 
-        padded_image = Image.new(image.mode, (new_width, new_height))
-        padded_image.paste(scaled_image, (0, adjusted_padding_top))
-
-        for i in range(adjusted_padding_top):
-            padded_image.paste(
-                scaled_image.crop((0, 0, new_width, 1)),
-                (0, adjusted_padding_top - i - 1),
-            )
-        for i in range(adjusted_padding_bottom):
-            padded_image.paste(
-                scaled_image.crop((0, scaled_height - 1, new_width, scaled_height)),
-                (0, new_height - adjusted_padding_bottom + i),
-            )
+        scaled_arr = np.array(scaled_image)
+        pad_width = ((adjusted_padding_top, adjusted_padding_bottom), (0, 0))
+        if scaled_arr.ndim == 3:
+            pad_width = (*pad_width, (0, 0))
+        padded_arr = np.pad(scaled_arr, pad_width, mode="edge")
+        padded_image = Image.fromarray(padded_arr, mode=scaled_image.mode)
 
         padding_info = {
             "top": adjusted_padding_top,
@@ -149,19 +146,12 @@ def apply_reflection_padding(
         adjusted_padding_left = int((new_width - scaled_width) * center_x_ratio)
         adjusted_padding_right = new_width - scaled_width - adjusted_padding_left
 
-        padded_image = Image.new(image.mode, (new_width, new_height))
-        padded_image.paste(scaled_image, (adjusted_padding_left, 0))
-
-        for i in range(adjusted_padding_left):
-            padded_image.paste(
-                scaled_image.crop((0, 0, 1, new_height)),
-                (adjusted_padding_left - i - 1, 0),
-            )
-        for i in range(adjusted_padding_right):
-            padded_image.paste(
-                scaled_image.crop((scaled_width - 1, 0, scaled_width, new_height)),
-                (new_width - adjusted_padding_right + i, 0),
-            )
+        scaled_arr = np.array(scaled_image)
+        pad_width = ((0, 0), (adjusted_padding_left, adjusted_padding_right))
+        if scaled_arr.ndim == 3:
+            pad_width = (*pad_width, (0, 0))
+        padded_arr = np.pad(scaled_arr, pad_width, mode="edge")
+        padded_image = Image.fromarray(padded_arr, mode=scaled_image.mode)
 
         padding_info = {
             "top": 0,
@@ -350,7 +340,7 @@ def prepare_instance_masks(
 ) -> list[tuple[NDArray[np.uint8], NDArray[np.uint8]]]:
     """Split semantic masks into per-person instances and grow mask regions.
 
-    SegFormer outputs one merged person/clothes mask for the whole image. When
+    The human parser outputs one merged person/clothes mask for the whole image. When
     multiple people are present, YOLOX bboxes seed a marker-controlled
     watershed on the combined mask. Markers are placed at the thickest interior
     point inside each bbox (distance-transform peak), not at the bbox center.

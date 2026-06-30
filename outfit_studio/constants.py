@@ -8,17 +8,16 @@ from typing import Final
 MASK_ON: Final[int] = 255
 MASK_OFF: Final[int] = 0
 
-# --- SegFormer label IDs (mattmdjaga/segformer_b2_clothes) ---
-PERSON_SEGFORMER_CATEGORIES: Final[tuple[int, ...]] = (1, 2, 3, 11, 12, 13, 14, 15, 9, 10, 16)
-CLOTHES_SEGFORMER_CATEGORIES: Final[tuple[int, ...]] = (4, 5, 6, 7, 8, 16, 17)
+# --- Human parser label IDs (fashn-ai/fashn-human-parser) ---
+# 0 background | 1 face | 2 hair | 3 top | 4 dress | 5 skirt | 6 pants | 7 belt
+# 8 bag | 9 hat | 10 scarf | 11 glasses | 12 arms | 13 hands | 14 legs | 15 feet
+# 16 torso | 17 jewelry
+PERSON_PARSER_CATEGORIES: Final[tuple[int, ...]] = tuple(range(1, 18))
+CLOTHES_PARSER_CATEGORIES: Final[tuple[int, ...]] = (3, 4, 5, 6, 7, 8, 10)
 
-# --- U2NET cloth segmentation ---
-U2NET_INPUT_SIZE: Final[int] = 768
-U2NET_OUTPUT_CLASSES: Final[int] = 4
-U2NET_INPUT_CHANNELS: Final[int] = 3
-U2NET_NORMALIZE_MEAN: Final[float] = 0.5
-U2NET_NORMALIZE_STD: Final[float] = 0.5
-U2NET_TENSOR_CHANNELS: Final[tuple[int, ...]] = (1, 3, 18)
+# --- Segmentation post-processing ---
+SEGMENTATION_CLOTHES_CONFIDENCE: Final[float] = 0.35
+SEGMENTATION_MIN_COMPONENT_AREA: Final[int] = 64
 
 # --- Crop / mask morphology ---
 CROP_BOX_PADDING_RATIO: Final[float] = 0.1
@@ -47,7 +46,7 @@ HTTP_USER_AGENT: Final[str] = "outfit-studio/1.0"
 BYTES_PER_MIB: Final[int] = 1_048_576
 
 # --- VRAM budget estimates (GB) ---
-VRAM_SEGMENTATION_PEAK_GB: Final[float] = 4.0
+VRAM_SEGMENTATION_PEAK_GB: Final[float] = 3.5
 VRAM_INPAINT_SDXL_GB: Final[float] = 10.0
 VRAM_INPAINT_CONTROLNET_GB: Final[float] = 6.0
 VRAM_INPAINT_PLAIN_GB: Final[float] = 4.5

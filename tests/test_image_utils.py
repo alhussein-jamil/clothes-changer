@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image
 
-from outfit_studio.constants import CLOTHES_SEGFORMER_CATEGORIES, PERSON_SEGFORMER_CATEGORIES
+from outfit_studio.constants import CLOTHES_PARSER_CATEGORIES, PERSON_PARSER_CATEGORIES
 from outfit_studio.utils.image import (
     blend_images_with_enhancements,
     clip_bbox,
@@ -12,9 +12,10 @@ from outfit_studio.utils.image import (
 )
 
 
-def test_segformer_category_constants():
-    assert 11 in PERSON_SEGFORMER_CATEGORIES  # sunglasses/glasses → person, not clothes
-    assert 4 in CLOTHES_SEGFORMER_CATEGORIES
+def test_parser_category_constants():
+    assert 11 in PERSON_PARSER_CATEGORIES  # glasses → person, not clothes
+    assert 4 in CLOTHES_PARSER_CATEGORIES  # dress → clothes
+    assert 8 in CLOTHES_PARSER_CATEGORIES  # bag → clothes
 
 
 def test_resize_max():
