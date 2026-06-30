@@ -4,6 +4,7 @@ from outfit_studio.ml import gpu_memory
 
 
 def test_both_stacks_fit_when_total_vram_is_large(monkeypatch):
+    monkeypatch.setattr(gpu_memory.torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(gpu_memory, "gpu_memory_gb", lambda: (8.0, 16.0))
     monkeypatch.setattr(gpu_memory, "_inpaint_vram_budget_gb", lambda: 6.0)
     assert gpu_memory.both_stacks_fit_on_gpu() is True
