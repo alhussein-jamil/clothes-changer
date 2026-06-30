@@ -121,6 +121,10 @@ class Settings(BaseSettings):
         return content_config.get_segmentation_min_component_area()
 
     @property
+    def segmentation_clothes_edge_grow_px(self) -> int:
+        return content_config.get_segmentation_clothes_edge_grow_px()
+
+    @property
     def inpaint_steps(self) -> int:
         return content_config.get_inpaint_steps()
 

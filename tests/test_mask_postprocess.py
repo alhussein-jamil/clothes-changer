@@ -1,6 +1,9 @@
 import numpy as np
+from PIL import Image
+from scipy import ndimage
 
 from outfit_studio.ml.mask_postprocess import refine_segmentation_masks
+from outfit_studio.utils.image import mask_overlay
 
 
 def test_refine_segmentation_masks_constrains_clothes_to_person():
@@ -18,7 +21,7 @@ def test_refine_segmentation_masks_constrains_clothes_to_person():
 
     assert clothes_out[0:5, 0:5].sum() == 0
     assert clothes_out[10:20, 10:20].sum() > 0
-    assert person_out.sum() >= person.sum()
+    assert person_out.sum() == person.sum()
 
 
 def test_refine_segmentation_masks_drops_small_components():
@@ -32,3 +35,31 @@ def test_refine_segmentation_masks_drops_small_components():
     assert clothes[5, 5] == 1
     assert clothes_out[5, 5] == 0
     assert clothes_out[10:20, 10:20].sum() > 0
+
+
+def test_refine_segmentation_masks_closes_clothes_edge_ring():
+    """Parser-style undershoot leaves a person-only ring; grow should remove it."""
+    person = np.zeros((100, 100), dtype=np.uint8)
+    clothes = np.zeros((100, 100), dtype=np.uint8)
+    person[20:80, 20:80] = 1
+    clothes[22:78, 22:78] = 1
+
+    person_only_ring = (person > 0) & ~(clothes > 0)
+    ring_before = person_only_ring & ndimage.binary_dilation(clothes > 0)
+    assert ring_before.sum() > 0
+
+    person_out, clothes_out = refine_segmentation_masks(person, clothes, min_component_area=0)
+
+    ring_after = (person_out > 0) & ~(clothes_out > 0)
+    ring_after &= ndimage.binary_dilation(clothes_out > 0)
+    assert ring_after.sum() == 0
+
+    overlay = np.array(
+        mask_overlay(Image.new("RGB", (100, 100), color=(128, 128, 128)), person_out, clothes_out)
+    )
+    red_halo = (
+        (overlay[:, :, 0] > overlay[:, :, 1] + 20)
+        & (overlay[:, :, 3] > 0)
+        & ndimage.binary_dilation(clothes_out > 0)
+    )
+    assert red_halo.sum() == 0

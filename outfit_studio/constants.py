@@ -18,6 +18,8 @@ CLOTHES_PARSER_CATEGORIES: Final[tuple[int, ...]] = (3, 4, 5, 6, 7, 8, 10)
 # --- Segmentation post-processing ---
 SEGMENTATION_CLOTHES_CONFIDENCE: Final[float] = 0.35
 SEGMENTATION_MIN_COMPONENT_AREA: Final[int] = 64
+# Ellipse kernel size for grow_mask; covers parser edge mislabels (torso/arms at hem).
+SEGMENTATION_CLOTHES_EDGE_GROW_PX: Final[int] = 7
 
 # --- Crop / mask morphology ---
 CROP_BOX_PADDING_RATIO: Final[float] = 0.1

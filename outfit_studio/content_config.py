@@ -157,6 +157,12 @@ def get_segmentation_min_component_area() -> int:
     return int(_segmentation().get("min_component_area", SEGMENTATION_MIN_COMPONENT_AREA))
 
 
+def get_segmentation_clothes_edge_grow_px() -> int:
+    from outfit_studio.constants import SEGMENTATION_CLOTHES_EDGE_GROW_PX
+
+    return int(_segmentation().get("clothes_edge_grow_px", SEGMENTATION_CLOTHES_EDGE_GROW_PX))
+
+
 def get_checkpoint_urls() -> dict[str, str]:
     urls = _models().get("download_urls", {})
     return {str(k): str(v) for k, v in urls.items()}

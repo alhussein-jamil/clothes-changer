@@ -126,6 +126,7 @@ class ClothesSegmentor:
                 person_np,
                 clothes_np,
                 min_component_area=self.settings.segmentation_min_component_area,
+                clothes_edge_grow_px=self.settings.segmentation_clothes_edge_grow_px,
             )
 
         logger.debug(

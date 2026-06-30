@@ -5,7 +5,11 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from outfit_studio.constants import SEGMENTATION_MIN_COMPONENT_AREA
+from outfit_studio.constants import (
+    SEGMENTATION_CLOTHES_EDGE_GROW_PX,
+    SEGMENTATION_MIN_COMPONENT_AREA,
+)
+from outfit_studio.utils.image import grow_mask
 
 
 def remove_small_components(mask: np.ndarray, min_area: int) -> np.ndarray:
@@ -27,13 +31,16 @@ def refine_segmentation_masks(
     clothes_mask: np.ndarray,
     *,
     min_component_area: int = SEGMENTATION_MIN_COMPONENT_AREA,
+    clothes_edge_grow_px: int = SEGMENTATION_CLOTHES_EDGE_GROW_PX,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Constrain clothes to the person silhouette and drop speckle."""
+    """Constrain clothes to the person silhouette, drop speckle, grow edges."""
     person = (person_mask > 0).astype(np.uint8)
     clothes = (clothes_mask > 0).astype(np.uint8)
 
     clothes = clothes & person
     clothes = remove_small_components(clothes, min_component_area)
 
-    person = person | clothes
+    if clothes_edge_grow_px > 0 and clothes.any():
+        clothes = grow_mask(clothes, clothes_edge_grow_px) & person
+
     return person, clothes
