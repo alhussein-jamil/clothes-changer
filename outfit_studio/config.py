@@ -5,6 +5,7 @@ Content and ML defaults (prompts, models, generation) live in ``config/content*.
 """
 
 import logging
+import secrets
 from functools import lru_cache
 from pathlib import Path
 
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = _PROJECT_ROOT
+_DEFAULT_SESSION_SECRET = "change-me-in-production"
+_LOCAL_HOST_MARKERS = ("localhost", "127.0.0.1", "[::1]")
 
 
 class Settings(BaseSettings):
@@ -49,6 +52,21 @@ class Settings(BaseSettings):
     default_admin: str = "admin"
     default_password: str = "admin"
     default_credits: int = DEFAULT_ADMIN_BOOTSTRAP_CREDITS
+
+    # Auth / security (production)
+    session_secret: str = _DEFAULT_SESSION_SECRET
+    session_cookie_secure: bool = False
+    public_base_url: str = "http://localhost:7860"
+    allow_local_signup: bool = True
+    allow_bootstrap_admin: bool = True
+    enforce_single_account_per_ip: bool = True
+    enforce_single_account_per_device: bool = True
+    trusted_proxy_hops: int = 1
+    forwarded_allow_ips: str = "127.0.0.1"
+    login_rate_limit: int = 10
+    login_rate_window_s: int = 300
+    signup_rate_limit: int = 5
+    signup_rate_window_s: int = 3600
 
     pipeline_debug: bool = False
     pipeline_debug_dir: Path = Path("debug-pipeline")
@@ -174,6 +192,15 @@ class Settings(BaseSettings):
     def resolved_torch_compile_cache_dir(self) -> Path:
         return self._resolve(self.torch_compile_cache_dir)
 
+    @property
+    def resolved_session_secret(self) -> str:
+        """Effective session signing key (auto-generated for local dev when unset)."""
+        if self.session_secret != _DEFAULT_SESSION_SECRET and len(self.session_secret) >= 32:
+            return self.session_secret
+        if is_local_development(self):
+            return _local_dev_session_secret()
+        return self.session_secret
+
     def ensure_dirs(self) -> None:
         for label, path in (
             ("models", self.resolved_models_dir),
@@ -207,3 +234,50 @@ def get_settings() -> Settings:
         settings.inpaint_model,
     )
     return settings
+
+
+_WEAK_PASSWORDS = frozenset({"admin", "password", "changeme", "12345678"})
+
+
+def is_local_development(settings: Settings) -> bool:
+    """True when running on a developer machine (not a production deploy)."""
+    if settings.debug:
+        return True
+    base = settings.public_base_url.lower()
+    return any(marker in base for marker in _LOCAL_HOST_MARKERS)
+
+
+@lru_cache
+def _local_dev_session_secret() -> str:
+    return secrets.token_urlsafe(48)
+
+
+def validate_deployment_settings(settings: Settings) -> None:
+    """Fail fast on unsafe production configuration when auth is required."""
+    if not settings.require_auth:
+        return
+
+    if is_local_development(settings):
+        if settings.session_secret == _DEFAULT_SESSION_SECRET:
+            logger.warning(
+                "OUTFIT_STUDIO_SESSION_SECRET is unset — using an ephemeral local secret. "
+                "Set a stable secret (32+ chars) before production deploy."
+            )
+        return
+
+    if settings.session_secret == _DEFAULT_SESSION_SECRET or len(settings.session_secret) < 32:
+        msg = (
+            "Set OUTFIT_STUDIO_SESSION_SECRET to a random string of at least 32 characters "
+            "before deploying with authentication enabled"
+        )
+        raise RuntimeError(msg)
+
+    if (
+        settings.allow_bootstrap_admin
+        and settings.default_password in _WEAK_PASSWORDS
+        and not settings.debug
+    ):
+        logger.warning(
+            "Default admin password is weak — change OUTFIT_STUDIO_DEFAULT_PASSWORD "
+            "or set OUTFIT_STUDIO_ALLOW_BOOTSTRAP_ADMIN=false after first deploy"
+        )

@@ -36,6 +36,7 @@ dependencies = [
     "requests>=2.32.0",
     "tqdm>=4.65.0",
     "gdown>=5.0.0",
+    "itsdangerous>=2.2.0",
 ]
 
 [project.optional-dependencies]
@@ -71,3 +72,4 @@ ignore = ["B008", "SIM117"]
 [tool.ruff.lint.per-file-ignores]
 "outfit_studio/main.py" = ["E402"]
 "scripts/*.py" = ["E402"]
+"outfit_studio/auth/routes.py" = ["E501"]

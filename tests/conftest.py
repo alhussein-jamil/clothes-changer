@@ -13,14 +13,16 @@ _tmp = tempfile.mkdtemp()
 os.environ["OUTFIT_STUDIO_DB_PATH"] = str(Path(_tmp) / "test.db")
 os.environ["OUTFIT_STUDIO_OUTPUT_DIR"] = str(Path(_tmp) / "outputs")
 os.environ["OUTFIT_STUDIO_REQUIRE_AUTH"] = "false"
+os.environ["OUTFIT_STUDIO_SESSION_SECRET"] = "test-secret-key-at-least-32-characters-long"
 os.environ["OUTFIT_STUDIO_MODELS_DIR"] = str(Path(_tmp) / "models")
 
 
 def _reset_caches() -> None:
-    from outfit_studio.config import get_settings
+    from outfit_studio.config import _local_dev_session_secret, get_settings
     from outfit_studio.content_config import clear_content_config_cache
 
     get_settings.cache_clear()
+    _local_dev_session_secret.cache_clear()
     clear_content_config_cache()
 
 

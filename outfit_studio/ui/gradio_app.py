@@ -15,7 +15,7 @@ from gradio_client import handle_file
 from gradio_imageslider import ImageSlider
 from PIL import Image
 
-from outfit_studio.config import PROJECT_ROOT, Settings, get_settings
+from outfit_studio.config import PROJECT_ROOT, Settings, get_settings, validate_deployment_settings
 from outfit_studio.constants import (
     CLOTHES_COLOR,
     CUSTOM_CSS,
@@ -919,13 +919,17 @@ class GradioApp:
             visible=True,
         )
 
-    def list_users_table(self) -> list[list]:
+    def list_users_table(self, request: gr.Request) -> list[list]:
+        if not self.is_admin(request):
+            raise gr.Error("Admin access required")
         return [
             [u.id, u.username, u.credits, "Yes" if u.is_admin else "No"]
             for u in self.db.list_users()
         ]
 
-    def update_credits(self, username: str, credits: int) -> str:
+    def update_credits(self, username: str, credits: int, request: gr.Request) -> str:
+        if not self.is_admin(request):
+            raise gr.Error("Admin access required")
         if not username or credits < 0:
             logger.warning("update_credits: invalid input user=%r credits=%r", username, credits)
             return "Invalid input"
@@ -936,7 +940,7 @@ class GradioApp:
     def _admin_panel_boot(self, request: gr.Request) -> tuple[dict, list[list] | dict]:
         """Show admin accordion and populate users table for admins only."""
         if self.is_admin(request):
-            return gr.update(visible=True), self.list_users_table()
+            return gr.update(visible=True), self.list_users_table(request)
         return gr.update(visible=False), gr.skip()
 
     def _load_history_on_tab(self, evt: gr.SelectData, request: gr.Request) -> list | dict:
@@ -988,7 +992,7 @@ class GradioApp:
                         user_info = gr.Textbox(show_label=False, interactive=False)
                         credits_info = gr.Textbox(show_label=False, interactive=False)
                         if self.settings.require_auth:
-                            gr.Button("Logout", link="/logout", size="sm")
+                            gr.Button("Logout", link="/auth/logout", size="sm")
 
                     with gr.Row(equal_height=True):
                         with gr.Column(scale=1):
@@ -1333,7 +1337,9 @@ class GradioApp:
 
     def launch(self) -> None:
         self.settings.ensure_dirs()
-        if not self.db.user_exists(self.settings.default_admin):
+        if self.settings.allow_bootstrap_admin and not self.db.user_exists(
+            self.settings.default_admin
+        ):
             try:
                 self.db.register_user(
                     self.settings.default_admin,
@@ -1367,6 +1373,14 @@ class GradioApp:
             self.settings.require_auth,
             len(allowed),
         )
+        get_inpaint_engine().start_background_preload()
+        if self.settings.require_auth:
+            validate_deployment_settings(self.settings)
+            from outfit_studio.auth.app import launch_with_fastapi
+
+            launch_with_fastapi(self, demo)
+            return
+
         launch_kwargs: dict = {
             "server_name": self.settings.host,
             "server_port": self.settings.port,
@@ -1374,7 +1388,4 @@ class GradioApp:
             "favicon_path": str(favicon) if favicon else None,
             "allowed_paths": allowed,
         }
-        if self.settings.require_auth:
-            launch_kwargs["auth"] = self.authenticate
-        get_inpaint_engine().start_background_preload()
         demo.launch(**launch_kwargs)

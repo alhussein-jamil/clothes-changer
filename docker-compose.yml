@@ -1,0 +1,31 @@
+services:
+  outfit-studio:
+    build: .
+    ports:
+      - "7860:7860"
+    env_file:
+      - .env
+    environment:
+      OUTFIT_STUDIO_HOST: "0.0.0.0"
+      OUTFIT_STUDIO_PORT: "7860"
+      OUTFIT_STUDIO_DB_PATH: "/app/data/database.db"
+      OUTFIT_STUDIO_OUTPUT_DIR: "/app/outputs"
+      OUTFIT_STUDIO_MODELS_DIR: "/app/models"
+      OUTFIT_STUDIO_SESSION_COOKIE_SECURE: "true"
+    volumes:
+      - outfit-data:/app/data
+      - outfit-outputs:/app/outputs
+      - outfit-models:/app/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  outfit-data:
+  outfit-outputs:
+  outfit-models:

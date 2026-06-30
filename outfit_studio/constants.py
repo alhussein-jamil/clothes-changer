@@ -176,7 +176,7 @@ class PersonProgress:
 
 
 # --- Auth / database defaults ---
-MIN_PASSWORD_LENGTH: Final[int] = 5
+MIN_PASSWORD_LENGTH: Final[int] = 8
 DEFAULT_NEW_USER_CREDITS: Final[int] = 10
 DEFAULT_ADMIN_BOOTSTRAP_CREDITS: Final[int] = 100
 HISTORY_DB_LIMIT: Final[int] = 50
