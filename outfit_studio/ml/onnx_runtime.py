@@ -31,7 +31,8 @@ def ensure_nvidia_cuda_libs() -> None:
     PyTorch cu130 wheels bundle CUDA 13, while PyPI ``onnxruntime-gpu`` is built
     for CUDA 12. The companion ``nvidia-*-cu12`` packages supply the missing
     ``libcublasLt.so.12``, ``libcufft.so.11``, etc. when they are on
-    ``LD_LIBRARY_PATH``. See ``NVIDIA_CUDA12_LIBS`` in the Makefile.
+    ``LD_LIBRARY_PATH``. The pinned ``nvidia-*-cu12`` packages in
+    ``pyproject.toml`` supply these libraries.
     """
     dirs: list[str] = []
     for base in site.getsitepackages():
@@ -100,7 +101,7 @@ def resolve_onnx_device() -> str:
                 logger.info(
                     "ONNX Runtime CUDA unavailable (using %s); "
                     "pose/detection will run on CPU. "
-                    "Run `make install-fast` to install CUDA 12 libs for ORT.",
+                    "Run `make install` to install CUDA 12 libs for ORT.",
                     providers[0] if providers else "CPU",
                 )
                 return "cpu"
@@ -109,6 +110,6 @@ def resolve_onnx_device() -> str:
         except Exception:
             logger.info(
                 "ONNX Runtime CUDA libraries unavailable; pose/detection will use CPU. "
-                "Run `make install-fast` to install CUDA 12 libs for ORT.",
+                "Run `make install` to install CUDA 12 libs for ORT.",
             )
             return "cpu"

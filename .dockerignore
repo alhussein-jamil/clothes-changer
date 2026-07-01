@@ -7,9 +7,13 @@ __pycache__/
 .env
 .env.local
 *.db
+*.db-shm
+*.db-wal
 outputs/
 debug-pipeline/
 .cache/
 models/
+config/content.local.yaml
 *.egg-info/
 dist/
+database.db*

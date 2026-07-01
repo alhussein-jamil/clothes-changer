@@ -98,19 +98,50 @@ Default login:
 admin / admin
 ```
 
-`make install-fast` creates the virtual environment, installs CUDA PyTorch and ONNX
-Runtime GPU support, and downloads the configured segmentation and inpaint models.
+`make install-fast` creates the virtual environment from the pinned lockfile,
+installs dependencies (including CUDA PyTorch and ONNX Runtime GPU support), and
+downloads the configured segmentation and inpaint models.
 
 ## Make targets
 
 | Target | Description |
 |--------|-------------|
-| `make install` | Create `.venv` and install Python dependencies |
-| `make install-fast` | Install deps, CUDA PyTorch, ONNX GPU support, and models |
+| `make install` | Create `.venv` and install pinned Python dependencies |
+| `make install-fast` | Install deps from `uv.lock` and download models |
 | `make download-models` | Download segmentation weights and configured inpaint checkpoint |
 | `make run` | Start the Gradio UI |
 | `make test` | Run non-slow unit tests |
 | `make lint` | Run Ruff |
+| `make docker-build` | Build the Docker image |
+| `make docker-up` | Start with GPU support |
+| `make docker-up-cpu` | Start without GPU |
+| `make docker-download-models` | Download ML weights into the running container |
+| `make docker-down` | Stop containers |
+| `make docker-logs` | Follow container logs |
+
+## Docker
+
+Requires [Docker](https://docs.docker.com/get-docker/) and, for GPU inference,
+the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+
+```bash
+cp .env.example .env
+make docker-build
+make docker-up          # GPU
+make docker-up-cpu      # no GPU toolkit
+make docker-download-models   # if not bind-mounting local weights
+```
+
+Open `http://localhost:7860`. Default login (bootstrapped on first start):
+
+```text
+admin / admin1234
+```
+
+Checkpoints bind-mount from `./models` by default. Optional `.env` overrides:
+
+- `OUTFIT_STUDIO_HOST_MODELS_DIR` — host checkpoint path (use the real path if `./models` is a symlink)
+- `OUTFIT_STUDIO_HOST_HF_CACHE` — Hugging Face hub cache (default: `~/.cache/huggingface`)
 
 ## Configuration
 

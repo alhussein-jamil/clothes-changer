@@ -1,3 +1,5 @@
+# CPU-only stack (no NVIDIA Container Toolkit required):
+#   docker compose -f docker-compose.cpu.yml up -d
 services:
   outfit-studio:
     build: .
@@ -24,7 +26,6 @@ services:
       - outfit-outputs:/app/outputs
       - ${OUTFIT_STUDIO_HOST_MODELS_DIR:-./models}:/app/models
       - ${OUTFIT_STUDIO_HOST_HF_CACHE:-${HOME}/.cache/huggingface}:/app/models/huggingface:ro
-    gpus: all
     restart: unless-stopped
 
 volumes:

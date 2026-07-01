@@ -26,7 +26,7 @@ generation:
   use_controlnet: true
   steps: 24
   guidance_scale: 10.0
-  inference_size: 640
+  inference_size: 512
 
 pose:
   detection_threshold: 0.5
