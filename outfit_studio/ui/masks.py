@@ -343,6 +343,45 @@ def apply_masks_to_editor(
     }
 
 
+def _fit_masks_to_source(
+    person: np.ndarray,
+    clothes: np.ndarray,
+    width: int,
+    height: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map masks to pipeline source dimensions (letterbox-aware)."""
+    if person.shape == (height, width):
+        return person, clothes
+    if person.shape == EDITOR_CANVAS_SIZE[::-1]:
+        return unletterbox_masks(person, clothes, (width, height))
+    return align_masks(person, clothes, height, width)
+
+
+def resolve_masks_for_generate(
+    editor: dict | None,
+    segment_masks: tuple[np.ndarray, np.ndarray] | None,
+    pipeline_source: Image.Image,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Resolve person/clothes masks for inpainting at pipeline resolution."""
+    width, height = pipeline_source.size
+    _, editor_person, editor_clothes = parse_editor_masks(editor)
+    editor_has = masks_have_pixels(editor_person, editor_clothes)
+    layers = (editor or {}).get("layers") or []
+
+    if editor_has and layers:
+        return _fit_masks_to_source(editor_person, editor_clothes, width, height)
+
+    if segment_masks is not None:
+        cached_person, cached_clothes = segment_masks
+        if masks_have_pixels(cached_person, cached_clothes):
+            return _fit_masks_to_source(cached_person, cached_clothes, width, height)
+
+    if editor_has:
+        return _fit_masks_to_source(editor_person, editor_clothes, width, height)
+
+    return None, None
+
+
 def parse_editor_masks(
     editor: dict | None,
 ) -> tuple[Image.Image | None, np.ndarray | None, np.ndarray | None]:

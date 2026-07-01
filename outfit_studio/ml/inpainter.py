@@ -70,6 +70,8 @@ class InpaintEngine:
         self._preload_error: str | None = None
         self._preload_lock = threading.Lock()
         self._preload_thread: threading.Thread | None = None
+        self._preload_done = threading.Event()
+        self._preload_done.set()
         self._work_abort = threading.Event()
         self._model_list_fingerprint: tuple[tuple[str, int], ...] | None = None
         self._model_list_cache: list[dict] | None = None
@@ -81,6 +83,18 @@ class InpaintEngine:
         """True while a background load/compile warmup is in progress."""
         with self._preload_lock:
             return self._preload_state == "running"
+
+    def wait_for_preload(
+        self,
+        *,
+        progress: Callable[[float, str], None] | None = None,
+    ) -> None:
+        """Block until background load/compile/warmup completes."""
+        while self.is_preparing():
+            self.checkpoint()
+            if progress is not None:
+                progress(0, desc="Loading and compiling model…")
+            self._preload_done.wait(timeout=0.25)
 
     def request_abort(self) -> None:
         """Signal load/compile/warmup to stop at the next checkpoint."""
@@ -109,6 +123,7 @@ class InpaintEngine:
                 return
             self._preload_state = "running"
             self._preload_error = None
+            self._preload_done.clear()
 
         def worker() -> None:
             self.clear_work_abort()
@@ -131,6 +146,7 @@ class InpaintEngine:
                     self._preload_error = str(exc)
             finally:
                 self.clear_work_abort()
+                self._preload_done.set()
 
         thread = threading.Thread(
             target=worker,

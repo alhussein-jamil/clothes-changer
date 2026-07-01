@@ -450,18 +450,17 @@ def test_prepare_upload_segment_stale_suppress_same_key_still_skips(mock_run_seg
 
 
 @patch("outfit_studio.ui.handlers.generation.get_inpaint_engine")
-@patch("outfit_studio.ui.handlers.generation.time.sleep")
-def test_generate_waits_for_preload(mock_sleep, mock_get_engine, db):
+def test_generate_waits_for_preload(mock_get_engine, db):
     app = GradioApp(db=db)
     db.register_user(app.settings.default_admin, "password123", credits=10, is_admin=True)
     mock_engine = mock_get_engine.return_value
-    mock_engine.is_preparing.side_effect = [True, True, False]
 
     bg = Image.new("RGB", (64, 64), color=(100, 120, 140))
     person = np.zeros((64, 64), dtype=np.uint8)
     clothes = np.zeros((64, 64), dtype=np.uint8)
     clothes[16:48, 16:48] = 1
     editor = apply_masks_to_editor(bg, person, clothes)
+    segment_masks = (person, clothes)
 
     with patch.object(app.pipeline, "generate") as mock_generate:
         mock_generate.return_value = (bg, "out.png", None)
@@ -469,6 +468,7 @@ def test_generate_waits_for_preload(mock_sleep, mock_get_engine, db):
             editor=editor,
             clean_source=bg,
             segment_key=None,
+            segment_masks=segment_masks,
             prompt="test",
             negative_prompt="bad",
             model_id=app.default_model,
@@ -483,6 +483,5 @@ def test_generate_waits_for_preload(mock_sleep, mock_get_engine, db):
             progress=lambda *_args, **_kwargs: None,
         )
 
-    assert mock_engine.is_preparing.call_count == 3
-    assert mock_sleep.call_count == 2
+    mock_engine.wait_for_preload.assert_called_once()
     mock_generate.assert_called_once()

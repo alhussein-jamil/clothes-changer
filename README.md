@@ -114,7 +114,7 @@ downloads the configured segmentation and inpaint models.
 | `make lint` | Run Ruff |
 | `make docker-build` | Build the Docker image |
 | `make docker-up` | Start with GPU support |
-| `make docker-up-cpu` | Start without GPU |
+| `make docker-up-cpu` | Start without GPU (base compose only) |
 | `make docker-download-models` | Download ML weights into the running container |
 | `make docker-down` | Stop containers |
 | `make docker-logs` | Follow container logs |
@@ -127,8 +127,8 @@ the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/c
 ```bash
 cp .env.example .env
 make docker-build
-make docker-up          # GPU
-make docker-up-cpu      # no GPU toolkit
+make docker-up          # GPU (compose + docker-compose.gpu.yml)
+make docker-up-cpu      # CPU-only, no NVIDIA Container Toolkit
 make docker-download-models   # if not bind-mounting local weights
 ```
 

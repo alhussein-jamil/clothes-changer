@@ -29,8 +29,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY . .
 
 RUN uv sync --frozen --no-dev && \
-    uv pip uninstall onnxruntime -y 2>/dev/null || true && \
-    uv pip install --reinstall-package onnxruntime-gpu onnxruntime-gpu && \
+    PYTHON=/app/.venv/bin/python ./docker/fix-ort-gpu.sh && \
     useradd --create-home --uid 1000 appuser && \
     mkdir -p /app/data /app/outputs /app/models && \
     chown -R appuser:appuser /app

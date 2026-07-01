@@ -12,6 +12,7 @@ from outfit_studio.content_config import (
     get_default_prompt,
 )
 from outfit_studio.ui.header import build_header_html
+from outfit_studio.ui.tabs.events import register_events
 from outfit_studio.ui.theme import (
     CLOTHES_COLOR,
     CUSTOM_CSS,
@@ -163,210 +164,48 @@ def build_ui(app) -> gr.Blocks:
             admin_msg = gr.Textbox(label="Result", interactive=False)
             admin_set.click(app.update_credits, [admin_user, admin_credits], admin_msg)
 
-        # Event wiring (Admin is not a hidden Tab — breaks Gradio 5 mount as Tab)
-        demo.load(app._admin_panel_boot, None, [admin_panel, users_df])
-        demo.load(app._user_label, None, user_info)
-        demo.load(app._credits_label, None, credits_info)
-        demo.load(
-            app._generate_tab_boot,
-            None,
-            [admin_settings, advanced_settings, user_prompt_addon, debug_status],
+        register_events(
+            app,
+            demo,
+            main_tabs=main_tabs,
+            user_info=user_info,
+            credits_info=credits_info,
+            input_image=input_image,
+            resegment_btn=resegment_btn,
+            clean_source=clean_source,
+            segment_key=segment_key,
+            segment_masks=segment_masks,
+            suppress_upload_hook=suppress_upload_hook,
+            pending_editor=pending_editor,
+            debug_session_dir=debug_session_dir,
+            debug_status=debug_status,
+            result=result,
+            use_as_input=use_as_input,
+            stop_btn=stop_btn,
+            generate_btn=generate_btn,
+            action_buttons=action_buttons,
+            examples=examples,
+            example_index=example_index,
+            user_prompt_addon=user_prompt_addon,
+            admin_settings=admin_settings,
+            advanced_settings=advanced_settings,
+            model_dropdown=model_dropdown,
+            use_controlnet=use_controlnet,
+            reload_btn=reload_btn,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            steps=steps,
+            guidance=guidance,
+            seed=seed,
+            random_seed=random_seed,
+            history_gallery=history_gallery,
+            history_refresh=history_refresh,
+            admin_panel=admin_panel,
+            users_df=users_df,
+            admin_user=admin_user,
+            admin_credits=admin_credits,
+            admin_set=admin_set,
+            admin_msg=admin_msg,
         )
-        demo.load(app.history_gallery_value, None, history_gallery)
-        demo.load(app._refresh_action_buttons, None, action_buttons)
-        preload_timer = gr.Timer(value=1, active=True)
-        preload_timer.tick(app._refresh_action_buttons, None, action_buttons)
-        main_tabs.select(app._load_history_on_tab, None, history_gallery)
-
-        history_refresh.click(app.history_images, None, history_gallery)
-
-        stop_btn.click(app._request_stop, None, None)
-
-        input_image.upload(
-            app.sync_clean_source,
-            inputs=[input_image, clean_source, segment_key],
-            outputs=clean_source,
-        ).success(
-            app._begin_operation,
-            None,
-            action_buttons,
-        ).then(
-            app.prepare_upload_segment,
-            inputs=[
-                input_image,
-                segment_key,
-                clean_source,
-                suppress_upload_hook,
-                debug_session_dir,
-                segment_masks,
-            ],
-            outputs=[
-                pending_editor,
-                clean_source,
-                segment_key,
-                suppress_upload_hook,
-                debug_session_dir,
-                segment_masks,
-            ],
-        ).then(
-            app._apply_pending_editor,
-            pending_editor,
-            input_image,
-        ).then(
-            app._clear_pending_editor,
-            pending_editor,
-            pending_editor,
-        ).then(
-            app._end_operation,
-            None,
-            action_buttons,
-        )
-        input_image.clear(
-            app.clear_editor_state,
-            None,
-            [
-                clean_source,
-                segment_key,
-                suppress_upload_hook,
-                debug_session_dir,
-                segment_masks,
-            ],
-        )
-        resegment_btn.click(
-            app._begin_operation,
-            None,
-            action_buttons,
-        ).then(
-            app.resegment,
-            [input_image, clean_source, segment_key, debug_session_dir, segment_masks],
-            [
-                pending_editor,
-                clean_source,
-                segment_key,
-                suppress_upload_hook,
-                debug_session_dir,
-                segment_masks,
-            ],
-        ).then(
-            app._apply_pending_editor,
-            pending_editor,
-            input_image,
-        ).then(
-            app._clear_pending_editor,
-            pending_editor,
-            pending_editor,
-        ).then(
-            app._debug_status_update,
-            debug_session_dir,
-            debug_status,
-        ).then(
-            app._end_operation,
-            None,
-            action_buttons,
-        )
-
-        def reload_models() -> gr.Dropdown:
-            app._refresh_models()
-            return gr.Dropdown(
-                choices=app.model_choices,
-                value=app.default_model,
-            )
-
-        reload_btn.click(reload_models, None, model_dropdown)
-
-        random_seed.change(
-            lambda r: gr.update(interactive=not r),
-            random_seed,
-            seed,
-        )
-
-        generate_btn.click(
-            app._begin_operation,
-            None,
-            action_buttons,
-        ).then(
-            lambda: gr.update(value=None),
-            None,
-            result,
-        ).then(
-            app.generate,
-            [
-                input_image,
-                clean_source,
-                segment_key,
-                prompt,
-                negative_prompt,
-                model_dropdown,
-                use_controlnet,
-                steps,
-                guidance,
-                seed,
-                random_seed,
-                debug_session_dir,
-                user_prompt_addon,
-            ],
-            [result, seed, debug_session_dir],
-        ).then(
-            app._debug_status_update,
-            debug_session_dir,
-            debug_status,
-        ).then(lambda: gr.update(visible=True), None, use_as_input).then(
-            app._credits_label, None, credits_info
-        ).then(app.history_images, None, history_gallery).then(
-            app._end_operation,
-            None,
-            action_buttons,
-        )
-
-        use_as_input.click(
-            app._begin_operation,
-            None,
-            action_buttons,
-        ).then(
-            app.use_result_as_input,
-            [result, debug_session_dir],
-            [
-                input_image,
-                clean_source,
-                segment_key,
-                suppress_upload_hook,
-                debug_session_dir,
-                segment_masks,
-            ],
-        ).then(
-            app._end_operation,
-            None,
-            action_buttons,
-        )
-
-        if examples is not None:
-            examples.dataset.select(
-                app._store_example_index,
-                None,
-                example_index,
-            ).then(
-                app._begin_operation,
-                None,
-                action_buttons,
-            ).then(
-                app.load_example_after_select,
-                inputs=[input_image, example_index, debug_session_dir],
-                outputs=[
-                    input_image,
-                    clean_source,
-                    segment_key,
-                    suppress_upload_hook,
-                    debug_session_dir,
-                    segment_masks,
-                ],
-            ).then(
-                app._debug_status_update,
-                debug_session_dir,
-                debug_status,
-            ).then(
-                app._end_operation,
-                None,
-                action_buttons,
-            )
 
     return demo

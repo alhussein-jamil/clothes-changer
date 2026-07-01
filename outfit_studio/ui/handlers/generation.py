@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import logging
 import random
-import time
 
 import gradio as gr
+import numpy as np
 from PIL import Image
 
 from outfit_studio.constants import SEED_MAX, GenerateProgress
 from outfit_studio.content_config import get_default_negative_prompt, get_default_prompt
 from outfit_studio.ml.inpainter import get_inpaint_engine
 from outfit_studio.ml.segmentation_workflow import run_segmentation
-from outfit_studio.ui.masks import parse_editor_masks
+from outfit_studio.ui.masks import masks_have_pixels, resolve_masks_for_generate
 from outfit_studio.ui.operation_control import OperationCancelled, bind_request
-from outfit_studio.utils.image import align_masks
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +67,7 @@ class GenerationHandlersMixin:
         editor: dict | None,
         clean_source: Image.Image | None,
         segment_key: str | None,
+        segment_masks: tuple[np.ndarray, np.ndarray] | None,
         prompt: str,
         negative_prompt: str,
         model_id: str,
@@ -116,34 +116,19 @@ class GenerationHandlersMixin:
             debug_session_dir = None
 
         engine = get_inpaint_engine()
-        while engine.is_preparing():
-            engine.checkpoint()
-            progress(0, desc="Loading and compiling model…")
-            time.sleep(0.25)
+        engine.wait_for_preload(progress=lambda fraction, desc: progress(fraction, desc=desc))
 
         progress(0, desc="Preparing generation")
 
-        source, person_mask, clothes_mask = parse_editor_masks(editor)
         pipeline_image = self._pipeline_source(editor, clean_source, segment_key)
         if pipeline_image is None:
             return None, seed, debug_session_dir
         source = pipeline_image
 
-        if (
-            person_mask is not None
-            and clothes_mask is not None
-            and person_mask.shape != (source.height, source.width)
-        ):
-            person_mask, clothes_mask = align_masks(
-                person_mask, clothes_mask, source.height, source.width
-            )
+        person_mask, clothes_mask = resolve_masks_for_generate(editor, segment_masks, source)
 
         try:
-            if (
-                person_mask is None
-                or clothes_mask is None
-                or (person_mask.sum() == 0 and clothes_mask.sum() == 0)
-            ):
+            if not masks_have_pixels(person_mask, clothes_mask):
                 progress(GenerateProgress.PREP_START, desc="Running clothes segmentation")
                 person_mask, clothes_mask, active_dir = run_segmentation(
                     source,

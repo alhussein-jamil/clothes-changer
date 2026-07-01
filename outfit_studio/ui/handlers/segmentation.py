@@ -440,7 +440,10 @@ class SegmentationHandlersMixin:
         debug_session_dir = self._effective_debug_dir(request, debug_session_dir)
         username = self._session_username(request) or self.settings.default_admin
         _, after = slider_val
-        clean = after.convert("RGB")
+        if isinstance(after, np.ndarray):
+            clean = Image.fromarray(after).convert("RGB")
+        else:
+            clean = after.convert("RGB")
         loaded = self._segment_loaded_image(
             clean,
             username=username,

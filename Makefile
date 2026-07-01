@@ -3,13 +3,11 @@
 
 UV := uv
 PYTHON := .venv/bin/python
+COMPOSE := docker compose
+COMPOSE_GPU := $(COMPOSE) -f docker-compose.yml -f docker-compose.gpu.yml
 
-# rtmlib depends on CPU onnxruntime; on Linux we swap in the GPU build after sync.
 fix-ort-gpu:
-	@if [ "$$(uname -s)" = "Linux" ]; then \
-		$(UV) pip uninstall onnxruntime -y 2>/dev/null || true; \
-		$(UV) pip install --reinstall-package onnxruntime-gpu onnxruntime-gpu --python $(PYTHON); \
-	fi
+	@if [ "$$(uname -s)" = "Linux" ]; then PYTHON=$(PYTHON) ./docker/fix-ort-gpu.sh; fi
 
 install:
 	$(UV) sync --frozen --extra dev
@@ -45,20 +43,19 @@ clean:
 	rm -rf .venv .pytest_cache .ruff_cache dist *.egg-info
 
 docker-build:
-	docker compose build
+	$(COMPOSE) build
 
 docker-up:
-	docker compose up -d
+	$(COMPOSE_GPU) up -d
 
 docker-up-cpu:
-	docker compose -f docker-compose.cpu.yml up -d
+	$(COMPOSE) up -d
 
 docker-down:
-	-docker compose down
-	-docker compose -f docker-compose.cpu.yml down
+	$(COMPOSE) down
 
 docker-logs:
-	docker compose logs -f outfit-studio
+	$(COMPOSE) logs -f outfit-studio
 
 docker-download-models:
-	docker compose exec outfit-studio outfit-studio-download-models
+	$(COMPOSE) exec outfit-studio outfit-studio-download-models

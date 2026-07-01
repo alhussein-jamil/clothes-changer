@@ -1,0 +1,4 @@
+# GPU override — merged with docker-compose.yml (make docker-up)
+services:
+  outfit-studio:
+    gpus: all

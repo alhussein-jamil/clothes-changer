@@ -6,6 +6,7 @@ from outfit_studio.ui.masks import (
     editor_mask_reset,
     letterbox_to_editor_canvas,
     parse_editor_masks,
+    resolve_masks_for_generate,
 )
 from outfit_studio.ui.theme import CLOTHES_COLOR, EDITOR_CANVAS_SIZE, PERSON_COLOR
 
@@ -33,6 +34,31 @@ def test_letterbox_unletterbox_roundtrip():
     assert back_person.shape == person.shape
     assert int(back_clothes.sum()) > 0
     assert back_clothes[150, 350] == 1
+
+
+def test_resolve_masks_prefers_cached_segment_masks_when_layers_stripped():
+    """Avoid composite diff when ML masks are cached but Gradio drops layers."""
+    from outfit_studio.utils.image import mask_overlay
+
+    bg = Image.new("RGB", (64, 48), color=(100, 100, 100))
+    person = np.zeros((48, 64), dtype=np.uint8)
+    clothes = np.zeros((48, 64), dtype=np.uint8)
+    person[10:30, 10:25] = 1
+    clothes[15:25, 15:20] = 1
+
+    editor = apply_masks_to_editor(bg, person, clothes)
+    editor["layers"] = []
+    editor["composite"] = mask_overlay(bg, person, clothes)
+
+    pipeline_source = Image.new("RGB", (64, 48), color=(100, 100, 100))
+    resolved_person, resolved_clothes = resolve_masks_for_generate(
+        editor,
+        (person, clothes),
+        pipeline_source,
+    )
+
+    assert resolved_person is not None and resolved_person[20, 15] == 1
+    assert resolved_clothes is not None and resolved_clothes[20, 18] == 1
 
 
 def test_apply_and_parse_roundtrip():
