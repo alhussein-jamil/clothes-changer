@@ -6,11 +6,15 @@ from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
 from scipy import ndimage as ndi
 from skimage.segmentation import watershed
 
 from outfit_studio.constants import (
+    AIRBRUSH_EDGE_SIGMA,
+    AIRBRUSH_STIPPLE_CEIL,
+    AIRBRUSH_STIPPLE_FLOOR,
+    AIRBRUSH_STIPPLE_SPACING,
     BLEND_FEATHER_DIVISOR,
     BLEND_MASK_GROW_DIVISOR,
     CROP_BOX_PADDING_RATIO,
@@ -31,6 +35,47 @@ def resize_max(image: Image.Image, max_size: int) -> Image.Image:
     return image.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
 
 
+def _soft_mask_coverage(
+    mask: NDArray[np.uint8],
+    sigma: float = AIRBRUSH_EDGE_SIGMA,
+) -> NDArray[np.float32]:
+    """Binary mask → continuous 0..1 coverage with airbrush-soft edges."""
+    hard = (mask > 0).astype(np.float32)
+    if sigma <= 0 or not hard.any():
+        return hard
+    # Slight dilate so the soft fringe still covers the hard silhouette.
+    k = max(3, int(round(sigma * 2)) | 1)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    dilated = cv2.dilate(hard, kernel)
+    return cv2.GaussianBlur(dilated, (0, 0), sigmaX=sigma, sigmaY=sigma)
+
+
+def _airbrush_stipple(
+    height: int,
+    width: int,
+    spacing: int = AIRBRUSH_STIPPLE_SPACING,
+) -> NDArray[np.float32]:
+    """Soft dotted/dashed spray density in [FLOOR, CEIL] for clothes overlay."""
+    spacing = max(2, spacing)
+    dots = np.zeros((height, width), dtype=np.float32)
+    dots[0::spacing, 0::spacing] = 1.0
+    half = spacing // 2
+    dots[half::spacing, half::spacing] = 0.9
+    # Dash suppression on alternating diagonal bands.
+    yy, xx = np.indices((height, width))
+    dash = ((yy // spacing) + (xx // spacing)) % 3 != 0
+    dots *= np.where(dash, 1.0, 0.28).astype(np.float32)
+    sigma = max(spacing * 0.38, 0.7)
+    soft = cv2.GaussianBlur(dots, (0, 0), sigmaX=sigma, sigmaY=sigma)
+    peak = float(soft.max())
+    if peak <= 1e-6:
+        return np.full((height, width), AIRBRUSH_STIPPLE_CEIL, dtype=np.float32)
+    norm = soft / peak
+    return (
+        AIRBRUSH_STIPPLE_FLOOR + (AIRBRUSH_STIPPLE_CEIL - AIRBRUSH_STIPPLE_FLOOR) * norm
+    ).astype(np.float32)
+
+
 def mask_overlay(
     image: Image.Image,
     person_mask: NDArray[np.uint8],
@@ -38,22 +83,56 @@ def mask_overlay(
     person_color: tuple[int, int, int, int] = UI.PERSON_COLOR,
     clothes_color: tuple[int, int, int, int] = UI.CLOTHES_COLOR,
 ) -> Image.Image:
-    """RGBA overlay for editor preview."""
-    base = np.array(image.convert("RGBA"))
-    overlay = np.zeros_like(base)
-    person_on = (person_mask > 0) & ~(clothes_mask > 0)
-    clothes_on = clothes_mask > 0
-    overlay[person_on] = person_color
-    overlay[clothes_on] = clothes_color
-    alpha = overlay[:, :, 3:4].astype(np.float32) / 255.0
-    blended = (
-        base[:, :, :3].astype(np.float32) * (1.0 - alpha)
-        + overlay[:, :, :3].astype(np.float32) * alpha
+    """RGBA editor preview: soft edges; clothes get dotted airbrush spray."""
+    base = np.asarray(image.convert("RGBA"), dtype=np.float32)
+    h, w = base.shape[:2]
+    clothes_cover = _soft_mask_coverage(clothes_mask)
+    # Continuous clothes coverage occludes person (no red bleed under spray gaps).
+    person_cover = _soft_mask_coverage(person_mask) * (1.0 - clothes_cover)
+    stipple = _airbrush_stipple(h, w)
+
+    clothes_a = clothes_cover * stipple * (clothes_color[3] / 255.0)
+    person_a = person_cover * (person_color[3] / 255.0)
+    clothes_rgb = np.asarray(clothes_color[:3], dtype=np.float32)
+    person_rgb = np.asarray(person_color[:3], dtype=np.float32)
+
+    out_rgb = base[:, :, :3]
+    out_rgb = out_rgb * (1.0 - person_a[..., None]) + person_rgb * person_a[..., None]
+    out_rgb = out_rgb * (1.0 - clothes_a[..., None]) + clothes_rgb * clothes_a[..., None]
+
+    out = np.empty((h, w, 4), dtype=np.uint8)
+    out[:, :, :3] = np.clip(out_rgb, 0, 255).astype(np.uint8)
+    out[:, :, 3] = np.maximum(base[:, :, 3], np.maximum(person_a, clothes_a) * 255.0).astype(
+        np.uint8
     )
-    out = np.empty_like(base)
-    out[:, :, :3] = blended.astype(np.uint8)
-    out[:, :, 3] = np.maximum(base[:, :, 3], overlay[:, :, 3])
     return Image.fromarray(out, mode="RGBA")
+
+
+def fill_mask_holes(mask: np.ndarray) -> np.ndarray:
+    """Fill fully enclosed background holes inside a binary mask."""
+    binary = mask > 0
+    if not binary.any():
+        return np.zeros_like(mask, dtype=np.uint8)
+    return ndi.binary_fill_holes(binary).astype(np.uint8)
+
+
+def smooth_binary_mask(mask: np.ndarray, smooth_px: int) -> np.ndarray:
+    """Morphological close — seals pinholes / stair-steps without eroding edges."""
+    binary = (mask > 0).astype(np.uint8)
+    if smooth_px <= 0 or not binary.any():
+        return binary
+    k = smooth_px if smooth_px % 2 == 1 else smooth_px + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    return cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+
+
+def soften_mask_for_inpaint(mask: Image.Image, sigma: float) -> Image.Image:
+    """Feather a hard L-mode mask so diffusion edges are less harsh."""
+    if sigma <= 0:
+        return mask
+    arr = np.asarray(mask.convert("L"), dtype=np.uint8)
+    soft = cv2.GaussianBlur(arr, (0, 0), sigmaX=sigma, sigmaY=sigma)
+    return Image.fromarray(soft, mode="L")
 
 
 def get_bounding_box(mask: NDArray[np.uint8]) -> tuple[int, int, int, int]:
@@ -199,7 +278,12 @@ def grow_mask_pil(mask: Image.Image, grow_amount: int) -> Image.Image:
 
 
 def feather_mask_pil(mask: Image.Image, radius: int) -> Image.Image:
-    return mask.filter(ImageFilter.GaussianBlur(radius))
+    """Gaussian feather via OpenCV (faster than Pillow on large masks)."""
+    if radius <= 0:
+        return mask
+    arr = np.asarray(mask.convert("L"), dtype=np.uint8)
+    soft = cv2.GaussianBlur(arr, (0, 0), sigmaX=float(radius), sigmaY=float(radius))
+    return Image.fromarray(soft, mode="L")
 
 
 def blend_images_with_enhancements(
@@ -242,9 +326,18 @@ def composite_crop_onto(
     """Alpha-composite an inpainted crop onto the full frame (no hard paste seam)."""
     base = full_image.convert("RGBA")
     patch_rgba = patch.convert("RGBA")
-    layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    layer.paste(patch_rgba, (left, top))
-    return Image.alpha_composite(base, layer).convert("RGB")
+    left = max(0, left)
+    top = max(0, top)
+    right = min(base.width, left + patch_rgba.width)
+    bottom = min(base.height, top + patch_rgba.height)
+    if right <= left or bottom <= top:
+        return full_image.convert("RGB")
+    patch_rgba = patch_rgba.crop((0, 0, right - left, bottom - top))
+    region = base.crop((left, top, right, bottom))
+    blended = Image.alpha_composite(region, patch_rgba)
+    out = base.copy()
+    out.paste(blended, (left, top))
+    return out.convert("RGB")
 
 
 def get_crop_info(mask: Image.Image) -> dict:

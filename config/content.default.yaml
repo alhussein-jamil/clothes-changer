@@ -21,6 +21,7 @@ segmentation:
   clothes_confidence: 0.15
   min_component_area: 32
   clothes_edge_grow_px: 7
+  clothes_smooth_px: 11
 
 generation:
   use_controlnet: true

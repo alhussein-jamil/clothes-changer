@@ -18,7 +18,7 @@ from outfit_studio.ui.theme import (
     UI,
     MaskEditor,
 )
-from outfit_studio.utils.image import align_masks, mask_overlay
+from outfit_studio.utils.image import align_masks, fill_mask_holes, mask_overlay, smooth_binary_mask
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,11 @@ def _masks_from_composite(
 
     if person.sum() == 0 and clothes.sum() == 0:
         return None, None
+
+    # Stippled composite can leave pinholes in clothes only — never patch person.
+    close_px = MaskEditor.COMPOSITE_CLOTHES_CLOSE_PX
+    clothes = fill_mask_holes(clothes)
+    clothes = smooth_binary_mask(clothes, close_px)
     return person, clothes
 
 

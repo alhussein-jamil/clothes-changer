@@ -14,6 +14,7 @@ from PIL import Image
 
 from outfit_studio.config import get_settings
 from outfit_studio.constants import (
+    INPAINT_MASK_SOFTEN_SIGMA,
     INPAINT_STRENGTH,
     MASK_ON,
     MIN_INSTANCE_CLOTHES_PIXELS,
@@ -38,6 +39,7 @@ from outfit_studio.utils.image import (
     get_crop_info,
     prepare_instance_masks,
     remove_reflection_padding,
+    soften_mask_for_inpaint,
 )
 from outfit_studio.utils.logging import log_duration
 
@@ -140,12 +142,14 @@ class GenerationPipeline:
             padding_info = None
 
         cnet_image = padded_image.copy()
-        binary_mask = Image.fromarray(
+        hard_mask = Image.fromarray(
             ((np.array(padded_mask) > 0).astype(np.uint8) * MASK_ON),
             mode="L",
         )
-        cnet_image.paste(0, (0, 0), binary_mask)
+        # Hard cutout for ControlNet input; soft mask for diffusion edges.
+        cnet_image.paste(0, (0, 0), hard_mask)
         cnet_image = cnet_image.convert("RGB")
+        binary_mask = soften_mask_for_inpaint(hard_mask, INPAINT_MASK_SOFTEN_SIGMA)
 
         pose_est = get_pose_estimator()
         control_image = None

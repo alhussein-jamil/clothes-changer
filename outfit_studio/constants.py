@@ -18,11 +18,18 @@ CLOTHES_PARSER_CATEGORIES: Final[tuple[int, ...]] = (3, 4, 5, 6, 7, 8, 10)
 # --- Crop / mask morphology ---
 CROP_BOX_PADDING_RATIO: Final[float] = 0.1
 BLEND_MASK_GROW_DIVISOR: Final[int] = 30
-BLEND_FEATHER_DIVISOR: Final[int] = 4
+BLEND_FEATHER_DIVISOR: Final[int] = 3
 INSTANCE_MASK_GROW_DIVISOR: Final[int] = 60
 MIN_INSTANCE_CLOTHES_PIXELS: Final[int] = 500
 MIN_POSE_IMAGE_SIDE: Final[int] = 32
 DEFAULT_MASK_GROW_PX: Final[int] = 5
+INPAINT_MASK_SOFTEN_SIGMA: Final[float] = 1.6
+
+# --- Editor airbrush overlay (visual only; binary layers stay solid for decode) ---
+AIRBRUSH_EDGE_SIGMA: Final[float] = 2.4
+AIRBRUSH_STIPPLE_SPACING: Final[int] = 4
+AIRBRUSH_STIPPLE_FLOOR: Final[float] = 0.38
+AIRBRUSH_STIPPLE_CEIL: Final[float] = 1.0
 
 # --- Stable Diffusion ---
 LATENT_ALIGN: Final[int] = 8

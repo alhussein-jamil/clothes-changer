@@ -52,6 +52,7 @@ def build_ui(app) -> gr.Blocks:
                                 colors=[f"rgba{PERSON_COLOR}", f"rgba{CLOTHES_COLOR}"],
                                 color_mode="fixed",
                                 default_color=f"rgba{CLOTHES_COLOR}",
+                                default_size=UI.BRUSH_DEFAULT_SIZE,
                             ),
                         )
                         resegment_btn = gr.Button("Redo Clothes Segmentation", size="sm")

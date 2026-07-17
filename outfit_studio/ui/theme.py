@@ -10,13 +10,16 @@ class MaskEditor:
     CHANNEL_MIN: Final[int] = 20
     COMPOSITE_DIFF_MIN: Final[int] = 6
     COMPOSITE_CHANNEL_BIAS_MIN: Final[int] = 8
+    # Close stipple gaps when recovering clothes from airbrush composite only.
+    COMPOSITE_CLOTHES_CLOSE_PX: Final[int] = 5
     FINGERPRINT_SIZE: Final[tuple[int, int]] = (64, 64)
 
 
 class UI:
     EDITOR_CANVAS_SIZE: Final[tuple[int, int]] = (1000, 1000)
-    PERSON_COLOR: Final[tuple[int, int, int, int]] = (255, 0, 0, 100)
-    CLOTHES_COLOR: Final[tuple[int, int, int, int]] = (0, 255, 0, 100)
+    PERSON_COLOR: Final[tuple[int, int, int, int]] = (255, 0, 0, 90)
+    CLOTHES_COLOR: Final[tuple[int, int, int, int]] = (0, 255, 0, 110)
+    BRUSH_DEFAULT_SIZE: Final[int] = 28
     MAX_EXAMPLES: Final[int] = 12
     HISTORY_GALLERY_LIMIT: Final[int] = 48
     HISTORY_CAPTION_MAX_LEN: Final[int] = 80

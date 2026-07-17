@@ -38,6 +38,7 @@ class ContentSettings(BaseModel):
     clothes_confidence: float = 0.15
     min_component_area: int = 32
     clothes_edge_grow_px: int = 7
+    clothes_smooth_px: int = 11
     checkpoint_urls: dict[str, str] = Field(default_factory=dict)
     model_aliases: dict[str, list[str]] = Field(default_factory=dict)
 
@@ -104,6 +105,7 @@ def _parse_content_settings(data: dict[str, Any]) -> ContentSettings:
         clothes_confidence=float(segmentation.get("clothes_confidence", 0.15)),
         min_component_area=int(segmentation.get("min_component_area", 32)),
         clothes_edge_grow_px=int(segmentation.get("clothes_edge_grow_px", 7)),
+        clothes_smooth_px=int(segmentation.get("clothes_smooth_px", 11)),
         checkpoint_urls={str(k): str(v) for k, v in urls.items()} if isinstance(urls, dict) else {},
         model_aliases={
             str(name): [str(alias) for alias in alias_list] for name, alias_list in aliases.items()

@@ -5,10 +5,13 @@ from outfit_studio.constants import CLOTHES_PARSER_CATEGORIES, PERSON_PARSER_CAT
 from outfit_studio.utils.image import (
     blend_images_with_enhancements,
     clip_bbox,
+    fill_mask_holes,
     get_bounding_box,
     mask_overlay,
     prepare_instance_masks,
     resize_max,
+    smooth_binary_mask,
+    soften_mask_for_inpaint,
 )
 
 
@@ -156,13 +159,50 @@ def test_mask_overlay():
 
 
 def test_mask_overlay_hides_person_under_clothes():
-    img = Image.new("RGB", (20, 20), color=(128, 128, 128))
-    person = np.ones((20, 20), dtype=np.uint8)
-    clothes = np.zeros((20, 20), dtype=np.uint8)
-    clothes[5:15, 5:15] = 1
+    img = Image.new("RGB", (64, 64), color=(128, 128, 128))
+    person = np.ones((64, 64), dtype=np.uint8)
+    clothes = np.zeros((64, 64), dtype=np.uint8)
+    clothes[16:48, 16:48] = 1
     overlay = np.array(mask_overlay(img, person, clothes))
-    overlap = (person > 0) & (clothes > 0)
-    assert overlay[overlap][0, 1] > overlay[overlap][0, 0]
+    core = clothes[20:44, 20:44].astype(bool)
+    core_pixels = overlay[20:44, 20:44][core]
+    assert core_pixels[:, 1].mean() > core_pixels[:, 0].mean()
+
+
+def test_mask_overlay_airbrush_varies_clothes_alpha():
+    """Clothes overlay should look sprayed (not a flat solid fill)."""
+    img = Image.new("RGB", (80, 80), color=(40, 40, 40))
+    person = np.zeros((80, 80), dtype=np.uint8)
+    clothes = np.zeros((80, 80), dtype=np.uint8)
+    clothes[10:70, 10:70] = 1
+    overlay = np.array(mask_overlay(img, person, clothes))
+    greens = overlay[20:60, 20:60, 1].astype(np.int16)
+    assert greens.max() - greens.min() > 8
+
+
+def test_smooth_binary_mask_closes_and_rounds():
+    mask = np.zeros((40, 40), dtype=np.uint8)
+    mask[10:30, 10:30] = 1
+    mask[18:22, 18:22] = 0  # hole
+    out = smooth_binary_mask(mask, 5)
+    assert out[20, 20] == 1
+    assert out.sum() >= mask.sum()
+
+
+def test_fill_mask_holes_patches_enclosed_gap():
+    mask = np.ones((30, 30), dtype=np.uint8)
+    mask[10:20, 12:18] = 0
+    out = fill_mask_holes(mask)
+    assert out[15, 15] == 1
+    assert out.sum() == 30 * 30
+
+
+def test_soften_mask_for_inpaint_feathers_edge():
+    hard = Image.new("L", (40, 40), 0)
+    hard.paste(255, (10, 10, 30, 30))
+    soft = np.array(soften_mask_for_inpaint(hard, 2.0))
+    assert soft[20, 20] > 200
+    assert 0 < soft[10, 20] < 255
 
 
 def test_blend_covers_grown_garment_edge():
