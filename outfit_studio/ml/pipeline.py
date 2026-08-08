@@ -24,7 +24,7 @@ from outfit_studio.constants import (
     PersonProgress,
 )
 from outfit_studio.content_config import get_default_negative_prompt, get_default_prompt
-from outfit_studio.ml.gpu_memory import free_cuda_cache, prepare_for_inpaint
+from outfit_studio.ml.gpu_memory import free_cuda_cache, prepare_for_inpaint, prepare_for_pose
 from outfit_studio.ml.inpainter import get_inpaint_engine
 from outfit_studio.ml.pipeline_debug import PipelineDebugSession
 from outfit_studio.ml.pose import ensure_pose_on_gpu, get_pose_estimator
@@ -191,8 +191,16 @@ class GenerationPipeline:
 
         engine = get_inpaint_engine()
         sub(PersonProgress.LOAD_MODEL, "Preparing inpaint")
-        infer_size = self.settings.compile_inpaint_size
-        resolved_model = model or get_inpaint_engine().default_model_id()
+        resolved_model = model or engine.default_model_id()
+        use_cn = bool(use_controlnet) and engine.model_architecture(resolved_model) != "sdxl"
+        # Prefer requested model arch for log size before pipe load mutates engine state.
+        if engine.model_architecture(resolved_model) == "sdxl":
+            from outfit_studio.constants import LATENT_ALIGN, MIN_LATENT_SIDE, SDXL_MIN_INFER_SIZE
+
+            base = max(int(engine.settings.content.inference_size), SDXL_MIN_INFER_SIZE)
+            infer_size = max(base // LATENT_ALIGN * LATENT_ALIGN, MIN_LATENT_SIDE)
+        else:
+            infer_size = engine.inference_size()
         logger.info(
             "Inpainting crop %dx%d at %dx%d (model=%s, controlnet=%s)",
             cnet_image.width,
@@ -200,7 +208,7 @@ class GenerationPipeline:
             infer_size,
             infer_size,
             resolved_model,
-            use_controlnet,
+            use_cn,
         )
 
         if debug is not None:
@@ -352,6 +360,7 @@ class GenerationPipeline:
 
         pose_est = get_pose_estimator()
         report_checked(GenerateProgress.DETECT_PEOPLE, "Detecting people")
+        prepare_for_pose()
         if use_controlnet:
             pose_est = ensure_pose_on_gpu()
         bboxes = pose_est.get_bboxes(image)

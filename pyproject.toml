@@ -39,6 +39,8 @@ dependencies = [
     "requests==2.34.2",
     "tqdm==4.68.3",
     "itsdangerous==2.2.0",
+    "tensortorrent>=0.2.5,<0.3",
+    "accelerate>=0.17",
 ]
 
 [project.optional-dependencies]

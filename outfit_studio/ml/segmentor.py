@@ -12,6 +12,7 @@ from PIL import Image
 from transformers import AutoModelForSemanticSegmentation, SegformerImageProcessor
 
 from outfit_studio.config import Settings, get_settings
+from outfit_studio.constants import HUMAN_PARSER_TT_SIZE
 from outfit_studio.ml.gpu_memory import (
     free_cuda_cache,
     model_load_lock,
@@ -37,6 +38,8 @@ class ClothesSegmentor:
         logger.info("ClothesSegmentor device=%s", self.device)
         self._processor: SegformerImageProcessor | None = None
         self._model: AutoModelForSemanticSegmentation | None = None
+        # When TensorTorrent wraps the parser, inputs must match the compiled square.
+        self._tt_input_size: int | None = None
         self._lock = threading.RLock()
 
     def unload(self) -> None:
@@ -44,8 +47,12 @@ class ClothesSegmentor:
         with self._lock:
             if self._model is not None:
                 logger.info("Unloading human parser from %s", self.device)
+                from outfit_studio.ml.tt_runtime import close_compiled
+
+                close_compiled(self._model)
             self._model = None
             self._processor = None
+            self._tt_input_size = None
             free_cuda_cache()
 
     def is_loaded(self) -> bool:
@@ -61,16 +68,44 @@ class ClothesSegmentor:
                     with log_duration(logger, "load human parser", device=self.device):
                         logger.info("Loading human parser (%s) on %s...", model_id, self.device)
                         self._processor = SegformerImageProcessor.from_pretrained(model_id)
-                        self._model = AutoModelForSemanticSegmentation.from_pretrained(
+                        model = AutoModelForSemanticSegmentation.from_pretrained(
                             model_id,
                             low_cpu_mem_usage=False,
                         )
-                        self._model = self._model.to(self.device)
+                        model = model.to(self.device)
+                        self._model = self._maybe_tensor_torrent(model, model_id)
                     logger.info("Human parser ready")
             except Exception:
                 self._processor = None
                 self._model = None
                 raise
+
+    def _maybe_tensor_torrent(self, model, model_id: str):
+        if not self.settings.tensor_torrent:
+            return model
+        from outfit_studio.ml.tt_runtime import try_compile_human_parser
+
+        device = torch.device(self.device)
+        dtype = next(model.parameters()).dtype
+        compiled = try_compile_human_parser(
+            model,
+            model_id=model_id,
+            cache_root=self.settings.resolved_tensor_torrent_cache_dir,
+            image_size=HUMAN_PARSER_TT_SIZE,
+            device=device,
+            dtype=dtype,
+            min_params_gb=self.settings.tensor_torrent_min_params_gb,
+        )
+        if compiled is None:
+            return model
+        self._tt_input_size = HUMAN_PARSER_TT_SIZE
+        logger.info(
+            "TensorTorrent active for human parser (%s, fixed %dx%d)",
+            model_id,
+            HUMAN_PARSER_TT_SIZE,
+            HUMAN_PARSER_TT_SIZE,
+        )
+        return compiled
 
     def segment(
         self,
@@ -95,7 +130,17 @@ class ClothesSegmentor:
         w, h = image.size
         logger.debug("segment %dx%d", w, h)
 
-        inputs = self._processor(images=image, return_tensors="pt").to(self.device)
+        # TensorTorrent artifacts are static-shape. Force the processor to the
+        # compiled square; logits are upsampled to the source (h, w) below.
+        if self._tt_input_size is not None:
+            size = self._tt_input_size
+            inputs = self._processor(
+                images=image,
+                return_tensors="pt",
+                size={"height": size, "width": size},
+            ).to(self.device)
+        else:
+            inputs = self._processor(images=image, return_tensors="pt").to(self.device)
         with log_duration(logger, "human parser inference"):
             with torch.inference_mode():
                 outputs = self._model(**inputs)

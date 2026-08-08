@@ -75,6 +75,18 @@ class Settings(BaseSettings):
     torch_compile_cache_dir: Path = Path(".cache/torch_compile")
     inductor_cache_dir: Path | None = None
 
+    # TensorTorrent — stream/spill only when a module is truly oversized
+    tensor_torrent: bool = True
+    tensor_torrent_cache_dir: Path = Path(".cache/tensortorrent")
+    # Skip TT below this param footprint (GiB). SD1.5 UNet ~1.7 GiB bf16 →
+    # eager/torch.compile; TT reserved for models that need capacity streaming.
+    tensor_torrent_min_params_gb: float = 4.0
+    # Allow UNet TT when the size gate passes (still False for SD1.5 by default).
+    tensor_torrent_unet: bool = True
+
+    # Civitai / civitai.red checkpoint downloads (Bearer token)
+    civitai_api_token: str = ""
+
     @property
     def content(self) -> content_config.ContentSettings:
         """Branded copy and ML defaults from config/content*.yaml."""
@@ -143,6 +155,10 @@ class Settings(BaseSettings):
     @property
     def resolved_torch_compile_cache_dir(self) -> Path:
         return self._resolve(self.torch_compile_cache_dir)
+
+    @property
+    def resolved_tensor_torrent_cache_dir(self) -> Path:
+        return self._resolve(self.tensor_torrent_cache_dir)
 
     @property
     def resolved_inductor_cache_dir(self) -> Path:

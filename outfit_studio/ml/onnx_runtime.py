@@ -63,7 +63,11 @@ def ensure_nvidia_cuda_libs() -> None:
 
 @lru_cache
 def resolve_onnx_device() -> str:
-    """Return ``cuda`` only when the ONNX Runtime CUDA EP can actually load."""
+    """Return ``cuda`` only when ORT CUDA works and the card has spare VRAM.
+
+    Consumer 8–10 GB GPUs need the full device for SD inpaint + ControlNet.
+    Pose/detection then stays on CPU (still fast for YOLOX/RTMPose).
+    """
     if not torch.cuda.is_available():
         logger.debug("ONNX device: cpu (CUDA unavailable)")
         return "cpu"
@@ -78,6 +82,18 @@ def resolve_onnx_device() -> str:
 
     if "CUDAExecutionProvider" not in ort.get_available_providers():
         logger.info("ONNX Runtime has no CUDA provider; pose/detection will use CPU")
+        return "cpu"
+
+    # Leave headroom for inpaint+ControlNet on small cards.
+    from outfit_studio.constants import VRAM_TIGHT_TOTAL_GB
+
+    free_bytes, total_bytes = torch.cuda.mem_get_info()
+    total_gb = total_bytes / (1024**3)
+    if total_gb < VRAM_TIGHT_TOTAL_GB:
+        logger.info(
+            "ONNX pose on CPU (GPU only %.1f GB — reserved for inpaint/ControlNet)",
+            total_gb,
+        )
         return "cpu"
 
     cache_dir = Path.home() / ".cache/rtmlib/hub/checkpoints"

@@ -10,7 +10,15 @@ logger = logging.getLogger(__name__)
 
 Architecture = Literal["sd15", "sdxl"]
 
-SDXL_NAME_HINTS = ("sdxl", "xl_inpaint", "xl-inpaint", "xl_inpainting")
+SDXL_NAME_HINTS = (
+    "sdxl",
+    "xl_inpaint",
+    "xl-inpaint",
+    "xl_inpainting",
+    "lustify",
+    "juggernautxl",
+    "cyberrealisticxl",
+)
 _SDXL_KEY_MARKERS = ("conditioner.", "text_encoder_2.")
 
 _SAFETENSORS_KEYS_CACHE: dict[tuple[str, int, int], list[str] | None] = {}
