@@ -102,6 +102,17 @@ admin / admin
 installs dependencies (including CUDA PyTorch and ONNX Runtime GPU support), and
 downloads the configured segmentation and inpaint models.
 
+### Windows
+
+```powershell
+powershell -ExecutionPolicy RemoteSigned -File scripts\setup.ps1
+.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\python.exe -m outfit_studio.main
+```
+
+Reinstall CUDA torch / ORT after `uv sync`: `scripts\install-cuda.ps1`.
+If the console mangles box-drawing glyphs, set `OUTFIT_STUDIO_ASCII_LOG=true`.
+
 ## Make targets
 
 Run `make` (or `make help`) for the colored target list. `NO_COLOR=1` disables ANSI.
