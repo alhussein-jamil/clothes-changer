@@ -53,6 +53,8 @@ def build_ui(app) -> gr.Blocks:
                             image_mode="RGBA",
                             layers=False,
                             canvas_size=EDITOR_CANVAS_SIZE,
+                            height=UI.EDITOR_HEIGHT_PX,
+                            elem_id="studio-input-editor",
                             brush=gr.Brush(
                                 colors=[f"rgba{PERSON_COLOR}", f"rgba{CLOTHES_COLOR}"],
                                 color_mode="fixed",
