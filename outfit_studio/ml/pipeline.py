@@ -5,9 +5,12 @@ from __future__ import annotations
 import logging
 import random
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
+from typing import Any
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image
@@ -24,7 +27,12 @@ from outfit_studio.constants import (
     PersonProgress,
 )
 from outfit_studio.content_config import get_default_negative_prompt, get_default_prompt
-from outfit_studio.ml.gpu_memory import free_cuda_cache, prepare_for_inpaint, prepare_for_pose
+from outfit_studio.ml.gpu_memory import (
+    free_cuda_cache,
+    prepare_for_inpaint,
+    prepare_for_pose,
+    prepare_next_generate,
+)
 from outfit_studio.ml.inpainter import get_inpaint_engine
 from outfit_studio.ml.pipeline_debug import PipelineDebugSession
 from outfit_studio.ml.pose import ensure_pose_on_gpu, get_pose_estimator
@@ -47,6 +55,9 @@ logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[float, str], None]
 
+# Drop tiny mask components so dust does not spawn fake "people".
+_MASK_BBOX_MIN_AREA = 64
+
 
 def _noop_progress(_fraction: float, _desc: str) -> None:
     pass
@@ -59,6 +70,27 @@ def _bbox_from_mask(mask: np.ndarray) -> np.ndarray:
         h, w = mask.shape[:2]
         return np.array([[0, 0, w, h]], dtype=np.float32)
     return np.array([[left, top, right, bottom]], dtype=np.float32)
+
+
+def _bboxes_from_masks(person_mask: np.ndarray, clothes_mask: np.ndarray) -> np.ndarray:
+    """xyxy boxes from connected components of person∪clothes (skip YOLO when masks exist)."""
+    combined = ((person_mask > 0) | (clothes_mask > 0)).astype(np.uint8)
+    if not combined.any():
+        return np.zeros((0, 4), dtype=np.float32)
+    num_labels, _labels, stats, _ = cv2.connectedComponentsWithStats(combined, connectivity=8)
+    boxes: list[list[float]] = []
+    for label_id in range(1, num_labels):
+        area = int(stats[label_id, cv2.CC_STAT_AREA])
+        if area < _MASK_BBOX_MIN_AREA:
+            continue
+        x = int(stats[label_id, cv2.CC_STAT_LEFT])
+        y = int(stats[label_id, cv2.CC_STAT_TOP])
+        w = int(stats[label_id, cv2.CC_STAT_WIDTH])
+        h = int(stats[label_id, cv2.CC_STAT_HEIGHT])
+        boxes.append([x, y, x + w, y + h])
+    if not boxes:
+        return _bbox_from_mask(combined)
+    return np.asarray(boxes, dtype=np.float32)
 
 
 def _scoped_progress(
@@ -75,35 +107,37 @@ def _scoped_progress(
     return sub
 
 
+@dataclass
+class _PersonRegion:
+    """Crop/pad state for one person; control_image filled in the pose phase."""
+
+    person_mask: np.ndarray
+    clothes_mask: np.ndarray
+    crop_info: dict
+    crop_box: tuple[int, int, int, int]
+    cropped_image: Image.Image
+    cropped_clothes: Image.Image
+    cropped_person_mask: Image.Image
+    padded_image: Image.Image
+    padding_info: Any
+    target_size: int
+    cnet_image: Image.Image
+    binary_mask: Image.Image
+    control_image: Image.Image | None = None
+
+
 class GenerationPipeline:
     """Coordinates segmentation → per-person inpaint → blend (original flow)."""
 
     def __init__(self) -> None:
         self.settings = get_settings()
 
-    def _process_single_mask(
+    def _build_person_region(
         self,
         full_image: Image.Image,
         person_mask: np.ndarray,
         clothes_mask: np.ndarray,
-        prompt: str,
-        negative_prompt: str,
-        guidance_scale: float,
-        num_inference_steps: int,
-        generator: torch.Generator,
-        model: str | None,
-        use_controlnet: bool,
-        progress: ProgressCallback | None = None,
-        progress_span: tuple[float, float] = (0.0, 1.0),
-        person_index: int = 1,
-        person_total: int = 1,
-        debug: PipelineDebugSession | None = None,
-    ) -> tuple[Image.Image, dict]:
-        report = progress or _noop_progress
-        prefix = f"Person {person_index}/{person_total}"
-        sub = _scoped_progress(report, progress_span, prefix)
-
-        sub(PersonProgress.PREP, "Preparing region")
+    ) -> _PersonRegion:
         person_binary = Image.fromarray((person_mask > 0).astype(np.uint8) * MASK_ON, mode="L")
         clothes_binary = Image.fromarray((clothes_mask > 0).astype(np.uint8) * MASK_ON, mode="L")
         combined_mask = Image.new("L", full_image.size, 0)
@@ -111,13 +145,6 @@ class GenerationPipeline:
         combined_mask.paste(clothes_binary, (0, 0), clothes_binary)
 
         crop_info = get_crop_info(combined_mask)
-        logger.debug(
-            "Instance crop box (%d,%d)-(%d,%d)",
-            crop_info["left"],
-            crop_info["top"],
-            crop_info["right"],
-            crop_info["bottom"],
-        )
         crop_box = (
             crop_info["left"],
             crop_info["top"],
@@ -146,54 +173,126 @@ class GenerationPipeline:
             ((np.array(padded_mask) > 0).astype(np.uint8) * MASK_ON),
             mode="L",
         )
-        # Hard cutout for ControlNet input; soft mask for diffusion edges.
         cnet_image.paste(0, (0, 0), hard_mask)
         cnet_image = cnet_image.convert("RGB")
         binary_mask = soften_mask_for_inpaint(hard_mask, INPAINT_MASK_SOFTEN_SIGMA)
 
-        pose_est = get_pose_estimator()
-        control_image = None
-        if (
-            use_controlnet
-            and cnet_image.width >= MIN_POSE_IMAGE_SIDE
-            and cnet_image.height >= MIN_POSE_IMAGE_SIDE
-        ):
-            sub(PersonProgress.POSE_DETECT, "Detecting pose")
-            combined_crop = (np.array(cropped_person_mask) > 0) | (np.array(cropped_clothes) > 0)
-            if padding_info is not None:
-                combined_pil = Image.fromarray(combined_crop.astype(np.uint8) * MASK_ON, mode="L")
-                combined_padded, _ = apply_reflection_padding(
-                    combined_pil,
-                    (target_size, target_size),
-                    center=crop_info["center"],
-                )
-                pose_region = np.array(combined_padded) > 0
-            else:
-                pose_region = combined_crop
-            bboxes = _bbox_from_mask(pose_region.astype(np.uint8))
-            logger.debug("Pose bbox from segmentation mask")
-            pose_keypoints, pose_scores = pose_est.estimate_keypoints(cnet_image, bboxes=bboxes)
-            sub(PersonProgress.POSE_GUIDE, "Building ControlNet guide")
-            control_image = pose_est.render_skeleton(
-                cnet_image.size,
-                pose_keypoints,
-                pose_scores,
-            )
-        elif use_controlnet:
+        return _PersonRegion(
+            person_mask=person_mask,
+            clothes_mask=clothes_mask,
+            crop_info=crop_info,
+            crop_box=crop_box,
+            cropped_image=cropped_image,
+            cropped_clothes=cropped_clothes,
+            cropped_person_mask=cropped_person_mask,
+            padded_image=padded_image,
+            padding_info=padding_info,
+            target_size=target_size,
+            cnet_image=cnet_image,
+            binary_mask=binary_mask,
+        )
+
+    def _attach_control_image(
+        self,
+        region: _PersonRegion,
+        *,
+        prepare: bool = False,
+    ) -> None:
+        """Estimate ControlNet skeleton while pose ORT is still warm (before inpaint load)."""
+        cnet_image = region.cnet_image
+        if cnet_image.width < MIN_POSE_IMAGE_SIDE or cnet_image.height < MIN_POSE_IMAGE_SIDE:
             logger.warning(
                 "Skipping ControlNet pose for degenerate crop %dx%d",
                 cnet_image.width,
                 cnet_image.height,
             )
-            sub(PersonProgress.PREP_AREA, "Preparing inpaint area (no pose)")
+            return
+
+        pose_est = get_pose_estimator()
+        combined_crop = (np.array(region.cropped_person_mask) > 0) | (
+            np.array(region.cropped_clothes) > 0
+        )
+        if region.padding_info is not None:
+            combined_pil = Image.fromarray(combined_crop.astype(np.uint8) * MASK_ON, mode="L")
+            combined_padded, _ = apply_reflection_padding(
+                combined_pil,
+                (region.target_size, region.target_size),
+                center=region.crop_info["center"],
+            )
+            pose_region = np.array(combined_padded) > 0
         else:
-            sub(PersonProgress.PREP_AREA, "Preparing inpaint area")
+            pose_region = combined_crop
+        bboxes = _bbox_from_mask(pose_region.astype(np.uint8))
+        pose_keypoints, pose_scores = pose_est.estimate_keypoints(
+            cnet_image,
+            bboxes=bboxes,
+            prepare=prepare,
+        )
+        region.control_image = pose_est.render_skeleton(
+            cnet_image.size,
+            pose_keypoints,
+            pose_scores,
+        )
+
+    def _process_single_mask(
+        self,
+        full_image: Image.Image,
+        person_mask: np.ndarray,
+        clothes_mask: np.ndarray,
+        prompt: str,
+        negative_prompt: str,
+        guidance_scale: float,
+        num_inference_steps: int,
+        generator: torch.Generator,
+        model: str | None,
+        use_controlnet: bool,
+        progress: ProgressCallback | None = None,
+        progress_span: tuple[float, float] = (0.0, 1.0),
+        person_index: int = 1,
+        person_total: int = 1,
+        debug: PipelineDebugSession | None = None,
+        region: _PersonRegion | None = None,
+        prompt_embeds: dict[str, Any] | None = None,
+    ) -> tuple[Image.Image, dict]:
+        report = progress or _noop_progress
+        prefix = f"Person {person_index}/{person_total}"
+        sub = _scoped_progress(report, progress_span, prefix)
+
+        sub(PersonProgress.PREP, "Preparing region")
+        if region is None:
+            region = self._build_person_region(full_image, person_mask, clothes_mask)
+            if use_controlnet:
+                sub(PersonProgress.POSE_DETECT, "Detecting pose")
+                self._attach_control_image(region, prepare=True)
+                if region.control_image is not None:
+                    sub(PersonProgress.POSE_GUIDE, "Building ControlNet guide")
+                else:
+                    sub(PersonProgress.PREP_AREA, "Preparing inpaint area (no pose)")
+            else:
+                sub(PersonProgress.PREP_AREA, "Preparing inpaint area")
+        else:
+            if use_controlnet and region.control_image is not None:
+                sub(PersonProgress.POSE_GUIDE, "ControlNet guide ready")
+            elif use_controlnet:
+                sub(PersonProgress.PREP_AREA, "Preparing inpaint area (no pose)")
+            else:
+                sub(PersonProgress.PREP_AREA, "Preparing inpaint area")
+
+        crop_info = region.crop_info
+        crop_box = region.crop_box
+        cropped_image = region.cropped_image
+        cropped_clothes = region.cropped_clothes
+        cropped_person_mask = region.cropped_person_mask
+        padded_image = region.padded_image
+        padding_info = region.padding_info
+        cnet_image = region.cnet_image
+        binary_mask = region.binary_mask
+        control_image = region.control_image
 
         engine = get_inpaint_engine()
         sub(PersonProgress.LOAD_MODEL, "Preparing inpaint")
         resolved_model = model or engine.default_model_id()
         use_cn = bool(use_controlnet) and engine.model_architecture(resolved_model) != "sdxl"
-        # Prefer requested model arch for log size before pipe load mutates engine state.
         if engine.model_architecture(resolved_model) == "sdxl":
             from outfit_studio.constants import LATENT_ALIGN, MIN_LATENT_SIDE, SDXL_MIN_INFER_SIZE
 
@@ -253,6 +352,7 @@ class GenerationPipeline:
                 control_image=control_image,
                 strength=INPAINT_STRENGTH,
                 on_step=on_diffusion_step,
+                prompt_embeds=prompt_embeds,
             )
         if output_image.size != cnet_image.size:
             output_image = output_image.resize(cnet_image.size, Image.LANCZOS)
@@ -292,7 +392,7 @@ class GenerationPipeline:
         username: str = "guest",
         progress: ProgressCallback | None = None,
         debug_session_dir: str | None = None,
-    ) -> tuple[Image.Image, str]:
+    ) -> tuple[Image.Image, str, str | None]:
         report = progress or _noop_progress
 
         def report_checked(fraction: float, desc: str) -> None:
@@ -313,6 +413,7 @@ class GenerationPipeline:
         w, h = image.size
         logger.debug("Source image %dx%d", w, h)
 
+        had_editor_masks = person_mask is not None and clothes_mask is not None
         if person_mask is None or clothes_mask is None:
             logger.info("No editor masks — running full segmentation")
             report_checked(GenerateProgress.SEGMENT, "Running clothes segmentation")
@@ -358,12 +459,32 @@ class GenerationPipeline:
                 }
             )
 
-        pose_est = get_pose_estimator()
         report_checked(GenerateProgress.DETECT_PEOPLE, "Detecting people")
-        prepare_for_pose()
+        # Prefer mask-derived boxes when masks already isolate people (editor / seg).
+        # YOLO only when ControlNet needs detector OR masks have no usable components.
+        mask_bboxes = _bboxes_from_masks(person_mask, clothes_mask)
+        pose_est = get_pose_estimator()
         if use_controlnet:
+            prepare_for_pose()
             pose_est = ensure_pose_on_gpu()
-        bboxes = pose_est.get_bboxes(image)
+            if had_editor_masks and len(mask_bboxes) > 0:
+                bboxes = mask_bboxes
+                logger.info(
+                    "Using %d mask-derived bbox(es) — skip YOLO person detect",
+                    len(bboxes),
+                )
+            else:
+                bboxes = pose_est.get_bboxes(image, prepare=False)
+        elif len(mask_bboxes) > 0:
+            bboxes = mask_bboxes
+            logger.info(
+                "Using %d mask-derived bbox(es) — skip pose stack (ControlNet off)",
+                len(bboxes),
+            )
+        else:
+            prepare_for_pose()
+            bboxes = pose_est.get_bboxes(image, prepare=False)
+
         instances = prepare_instance_masks(person_mask, clothes_mask, bboxes)
         if debug is not None:
             debug.save_mask("01_person_mask.png", person_mask)
@@ -379,18 +500,36 @@ class GenerationPipeline:
         if not active:
             active = instances
 
+        # Phase A: crop + ControlNet skeletons while pose ORT is still on GPU.
+        regions: list[_PersonRegion | None] = []
+        if use_controlnet:
+            report_checked(GenerateProgress.PREP_END, "Building pose guides")
+            for person_m, clothes_m in active:
+                if int(clothes_m.sum()) == 0:
+                    regions.append(None)
+                    continue
+                region = self._build_person_region(image, person_m, clothes_m)
+                self._attach_control_image(region, prepare=False)
+                regions.append(region)
+        else:
+            regions = [None] * len(active)
+
         report_checked(GenerateProgress.PREP_END, "Loading inpainting model")
         prepare_for_inpaint()
-        get_inpaint_engine().load(model, use_controlnet)
+        engine = get_inpaint_engine()
+        engine.load(model, use_controlnet)
+        prompt_embeds = engine.encode_prompt_embeds(prompt, negative_prompt)
         if debug is not None:
-            engine = get_inpaint_engine()
             debug.metadata["loaded_model"] = engine._current_model
             debug.metadata["model_architecture"] = engine._architecture
             debug.metadata["controlnet_active"] = engine._use_controlnet
+            debug.metadata["prompt_embeds_cached"] = prompt_embeds is not None
 
         full_image = image.copy()
         logger.info("Processing %d person instance(s)", len(active))
-        for idx, (person_m, clothes_m) in enumerate(active, start=1):
+        for idx, ((person_m, clothes_m), region) in enumerate(
+            zip(active, regions, strict=True), start=1
+        ):
             clothes_px = int(clothes_m.sum())
             logger.info(
                 "Instance %d/%d — person_px=%d clothes_px=%d",
@@ -424,6 +563,8 @@ class GenerationPipeline:
                 person_index=idx,
                 person_total=len(active),
                 debug=debug,
+                region=region,
+                prompt_embeds=prompt_embeds,
             )
             full_image = composite_crop_onto(
                 full_image,
@@ -435,8 +576,8 @@ class GenerationPipeline:
                 debug.save_image(f"person_{idx:02d}/07_composited_full.png", full_image)
             logger.info("Pasted inpainted region at (%d, %d)", crop_info["left"], crop_info["top"])
 
-        pose_est.unload()
         free_cuda_cache()
+        prepare_next_generate(use_controlnet=bool(use_controlnet))
 
         report_checked(GenerateProgress.SAVE, "Saving result")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

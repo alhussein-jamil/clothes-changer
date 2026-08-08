@@ -66,6 +66,10 @@ class PoseEstimator:
         )
         logger.info("Pose models ready")
 
+    @property
+    def sessions_loaded(self) -> bool:
+        return self._det is not None and self._pose is not None
+
     def unload(self) -> None:
         """Release ONNX sessions so inpainting can use VRAM."""
         if self._det is not None or self._pose is not None:
@@ -82,11 +86,11 @@ class PoseEstimator:
         self.device = "cpu"
         self._load()
 
-    def get_bboxes(self, image: Image.Image) -> np.ndarray:
+    def get_bboxes(self, image: Image.Image, *, prepare: bool = True) -> np.ndarray:
         """Person bounding boxes in xyxy format (matches original RTMDet flow)."""
         from outfit_studio.ml.gpu_memory import prepare_for_pose
 
-        if self.device == "cuda":
+        if prepare and self.device == "cuda":
             prepare_for_pose()
         self._load()
         assert self._det is not None
@@ -127,17 +131,19 @@ class PoseEstimator:
         self,
         image: Image.Image,
         bboxes: np.ndarray | None = None,
+        *,
+        prepare: bool = True,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Whole-body OpenPose keypoints and per-joint confidence scores."""
         from outfit_studio.ml.gpu_memory import prepare_for_pose
 
-        if self.device == "cuda":
+        if prepare and self.device == "cuda":
             prepare_for_pose()
         self._load()
         assert self._pose is not None
         img = np.array(image.convert("RGB"))
         if bboxes is None:
-            bboxes = self.get_bboxes(image)
+            bboxes = self.get_bboxes(image, prepare=False)
 
         logger.debug("Estimating pose for %d bbox(es)", len(bboxes))
 

@@ -186,7 +186,9 @@ def test_prepare_for_pose_unloads_inpaint_when_vram_tight(monkeypatch):
 
     monkeypatch.setattr(gpu_memory, "gpu_free_gb", free_gb)
     engine = MagicMock(is_loaded=MagicMock(return_value=True))
+    pose = MagicMock(sessions_loaded=False)
     with (
+        patch("outfit_studio.ml.pose.get_pose_estimator", return_value=pose),
         patch("outfit_studio.ml.inpainter.get_inpaint_engine", return_value=engine),
         patch.object(gpu_memory, "release_inpaint_gpu") as release_inpaint,
         patch.object(gpu_memory, "release_segmentation_gpu") as release_seg,
@@ -194,3 +196,34 @@ def test_prepare_for_pose_unloads_inpaint_when_vram_tight(monkeypatch):
         gpu_memory.prepare_for_pose()
     release_inpaint.assert_called_once()
     release_seg.assert_not_called()
+
+
+def test_prepare_for_pose_skips_when_sessions_warm(monkeypatch):
+    monkeypatch.setattr(gpu_memory.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(gpu_memory, "gpu_free_gb", lambda: 4.0)
+    pose = MagicMock(sessions_loaded=True)
+    with (
+        patch("outfit_studio.ml.pose.get_pose_estimator", return_value=pose),
+        patch.object(gpu_memory, "release_inpaint_gpu") as release_inpaint,
+        patch.object(gpu_memory, "free_cuda_cache") as free_cache,
+    ):
+        gpu_memory.prepare_for_pose()
+    release_inpaint.assert_not_called()
+    free_cache.assert_not_called()
+
+
+def test_prepare_next_generate_warms_pose_when_vram_allows(monkeypatch):
+    monkeypatch.setattr(gpu_memory.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(gpu_memory, "gpu_free_gb", lambda: 4.0)
+    pose = MagicMock(sessions_loaded=False, device="cpu")
+    with patch("outfit_studio.ml.pose.ensure_pose_on_gpu", return_value=pose) as ensure:
+        with patch("outfit_studio.ml.pose.get_pose_estimator", return_value=pose):
+            gpu_memory.prepare_next_generate(use_controlnet=True)
+    ensure.assert_called_once()
+
+
+def test_prepare_next_generate_noop_without_controlnet(monkeypatch):
+    monkeypatch.setattr(gpu_memory.torch.cuda, "is_available", lambda: True)
+    with patch("outfit_studio.ml.pose.ensure_pose_on_gpu") as ensure:
+        gpu_memory.prepare_next_generate(use_controlnet=False)
+    ensure.assert_not_called()

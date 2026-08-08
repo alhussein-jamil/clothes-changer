@@ -137,6 +137,12 @@ def prepare_for_pose() -> None:
     if not torch.cuda.is_available():
         return
 
+    from outfit_studio.ml.pose import get_pose_estimator
+
+    # Already warm + enough free → skip empty_cache thrash and unload checks.
+    if get_pose_estimator().sessions_loaded and gpu_free_gb() >= VRAM_POSE_PEAK_GB:
+        return
+
     free_cuda_cache()
     if gpu_free_gb() >= VRAM_POSE_PEAK_GB:
         return
@@ -165,6 +171,23 @@ def prepare_for_pose() -> None:
         )
         release_segmentation_gpu()
         free_cuda_cache()
+
+
+def prepare_next_generate(*, use_controlnet: bool) -> None:
+    """Warm pose for the next ControlNet run when VRAM allows keeping inpaint loaded."""
+    if not use_controlnet or not torch.cuda.is_available():
+        return
+    if gpu_free_gb() < VRAM_POSE_PEAK_GB:
+        return
+    from outfit_studio.ml.pose import ensure_pose_on_gpu, get_pose_estimator
+
+    if get_pose_estimator().sessions_loaded and get_pose_estimator().device == "cuda":
+        return
+    try:
+        ensure_pose_on_gpu()
+        logger.info("Next-run prep: pose warm (inpaint kept)")
+    except Exception as exc:
+        logger.debug("Next-run pose prep skipped (%s)", exc)
 
 
 def release_pose_gpu() -> None:
