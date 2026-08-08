@@ -200,3 +200,113 @@ def test_download_model_unauthorized_mentions_token_env(monkeypatch, tmp_path):
         assert "OUTFIT_STUDIO_CIVITAI_API_TOKEN" in str(exc)
     finally:
         get_settings.cache_clear()
+
+
+def test_tensor_torrent_miss_restores_peers_to_cuda(monkeypatch):
+    """TT size-gate miss must not leave text_encoder on CPU (breaks encode_prompt)."""
+    from unittest.mock import MagicMock
+
+    eng = InpaintEngine.__new__(InpaintEngine)
+    eng.device = torch.device("cuda")
+    eng.dtype = torch.float16
+    eng._tt_unet_eager = None
+    eng.settings = MagicMock(
+        tensor_torrent_unet=True,
+        tensor_torrent_min_params_gb=4.0,
+        resolved_tensor_torrent_cache_dir=MagicMock(),
+    )
+    eng.inference_size = lambda: 512
+
+    class FakeMod(torch.nn.Module):
+        def __init__(self, name: str):
+            super().__init__()
+            self.name = name
+            self.device_name = "cpu"
+
+        def to(self, device, *args, **kwargs):  # noqa: ANN002
+            if isinstance(device, torch.device):
+                self.device_name = device.type
+            elif isinstance(device, str):
+                self.device_name = "cuda" if device.startswith("cuda") else device
+            return self
+
+    te = FakeMod("text_encoder")
+    vae = FakeMod("vae")
+    unet = FakeMod("unet")
+
+    class Pipe:
+        def __init__(self):
+            self.unet = unet
+            self.text_encoder = te
+            self.text_encoder_2 = None
+            self.vae = vae
+            self.controlnet = None
+
+    pipe = Pipe()
+    monkeypatch.setattr(
+        "outfit_studio.ml.gpu_memory.vram_is_tight",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "outfit_studio.ml.gpu_memory.free_cuda_cache",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "outfit_studio.ml.tt_runtime.try_compile_unet",
+        lambda *a, **k: None,
+    )
+
+    assert eng._apply_tensor_torrent(pipe, model_id="tiny.safetensors") is False
+    assert te.device_name == "cuda"
+    assert vae.device_name == "cuda"
+
+
+def test_tensor_torrent_hit_keeps_peers_on_cpu_when_tight(monkeypatch):
+    from unittest.mock import MagicMock
+
+    eng = InpaintEngine.__new__(InpaintEngine)
+    eng.device = torch.device("cuda")
+    eng.dtype = torch.float16
+    eng._tt_unet_eager = None
+    eng.settings = MagicMock(
+        tensor_torrent_unet=True,
+        tensor_torrent_min_params_gb=4.0,
+        resolved_tensor_torrent_cache_dir=MagicMock(),
+    )
+    eng.inference_size = lambda: 512
+
+    class FakeMod(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.device_name = "cpu"
+
+        def to(self, device, *args, **kwargs):  # noqa: ANN002
+            if isinstance(device, torch.device):
+                self.device_name = device.type
+            elif isinstance(device, str):
+                self.device_name = "cuda" if device.startswith("cuda") else device
+            return self
+
+    te = FakeMod()
+    unet = FakeMod()
+    compiled = FakeMod()
+
+    class Pipe:
+        def __init__(self):
+            self.unet = unet
+            self.text_encoder = te
+            self.text_encoder_2 = None
+            self.vae = None
+            self.controlnet = None
+
+    pipe = Pipe()
+    monkeypatch.setattr("outfit_studio.ml.gpu_memory.vram_is_tight", lambda: True)
+    monkeypatch.setattr("outfit_studio.ml.gpu_memory.free_cuda_cache", lambda: None)
+    monkeypatch.setattr(
+        "outfit_studio.ml.tt_runtime.try_compile_unet",
+        lambda *a, **k: compiled,
+    )
+
+    assert eng._apply_tensor_torrent(pipe, model_id="huge.safetensors") is True
+    assert te.device_name == "cpu"
+    assert pipe.unet is compiled

@@ -41,7 +41,9 @@ def build_ui(app) -> gr.Blocks:
                     if app.settings.require_auth:
                         gr.Button("Logout", link="/auth/logout", size="sm")
 
-                with gr.Row(equal_height=True):
+                # ImageEditor collapses to a bottom sliver when Row(equal_height)
+                # shares height with an empty ImageSlider — keep natural heights.
+                with gr.Row(elem_id="studio-generate-row"):
                     with gr.Column(scale=1):
                         input_image = gr.ImageEditor(
                             label="Input Image",
