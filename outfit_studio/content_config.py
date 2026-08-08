@@ -147,54 +147,6 @@ def get_default_inpaint_model() -> str:
     return get_content_settings().default_inpaint
 
 
-def get_human_parser_model() -> str:
-    return get_content_settings().human_parser
-
-
-def get_controlnet_model() -> str:
-    return get_content_settings().controlnet
-
-
-def get_use_controlnet() -> bool:
-    return get_content_settings().use_controlnet
-
-
-def get_inpaint_steps() -> int:
-    return get_content_settings().steps
-
-
-def get_guidance_scale() -> float:
-    return get_content_settings().guidance_scale
-
-
-def get_inference_size() -> int:
-    return get_content_settings().inference_size
-
-
-def get_detection_threshold() -> float:
-    return get_content_settings().detection_threshold
-
-
-def get_pose_keypoint_threshold() -> float:
-    return get_content_settings().keypoint_threshold
-
-
-def get_pose_mode() -> str:
-    return get_content_settings().pose_mode
-
-
-def get_segmentation_clothes_confidence() -> float:
-    return get_content_settings().clothes_confidence
-
-
-def get_segmentation_min_component_area() -> int:
-    return get_content_settings().min_component_area
-
-
-def get_segmentation_clothes_edge_grow_px() -> int:
-    return get_content_settings().clothes_edge_grow_px
-
-
 def get_checkpoint_urls() -> dict[str, str]:
     return dict(get_content_settings().checkpoint_urls)
 

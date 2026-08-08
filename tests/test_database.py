@@ -21,6 +21,8 @@ def test_duplicate_user(db: Database):
 def test_deduct_credit(db: Database):
     db.register_user("carol", "password123", credits=2)
     assert db.deduct_credit("carol")
-    assert db.get_credits("carol") == 1
+    user = db.get_user("carol")
+    assert user is not None
+    assert user.credits == 1
     assert db.deduct_credit("carol")
     assert not db.deduct_credit("carol")

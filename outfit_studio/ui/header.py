@@ -23,33 +23,42 @@ class SegmentationResult(NamedTuple):
     debug_session_dir: str | None
 
 
-def _header_title_block(name: str) -> str:
-    tagline = get_tagline().strip()
-    tagline_html = f'<p class="app-header-tagline">{html.escape(tagline)}</p>' if tagline else ""
-    return f'<div class="app-header-title"><h1>{html.escape(name)}</h1>{tagline_html}</div>'
-
-
-def _logo_image_style() -> str:
-    return (
-        f"max-width:min({UI.LOGO_MAX_WIDTH_PX}px,100%);"
-        f"height:auto;max-height:{UI.LOGO_MAX_HEIGHT_PX}px"
-    )
+def _brand_name_html(name: str) -> str:
+    """Split trailing word as muted weight — Game Studio style (Outfit <b>Studio</b>)."""
+    parts = name.strip().split()
+    if len(parts) >= 2:
+        head = html.escape(" ".join(parts[:-1]))
+        tail = html.escape(parts[-1])
+        return f"{head} <b>{tail}</b>"
+    return html.escape(name)
 
 
 def build_header_html(settings: Settings) -> str:
-    """Page header with logo and app name."""
+    """Studio chrome header: mark + brand + tagline."""
     logo = settings.resolved_logo_path
     name = get_app_name()
-    logo_style = _logo_image_style()
+    tagline = get_tagline().strip()
+    tagline_html = f'<p class="app-header-tagline">{html.escape(tagline)}</p>' if tagline else ""
+    mark = (
+        f'<img class="app-mark" src="/file={logo}" '
+        f'width="{UI.MARK_SIZE_PX}" height="{UI.MARK_SIZE_PX}" '
+        f'alt="" />'
+    )
 
     return "\n".join(
         [
             '<div class="app-header">',
-            '<div class="app-header-brand">',
-            '<div class="app-header-logo-wrap">',
-            f'<img src="/file={logo}" alt="{html.escape(name)}" style="{logo_style}" />',
+            '<div class="app-topbar">',
+            '<div class="app-brand">',
+            mark,
+            f'<p class="app-brand-name">{_brand_name_html(name)}</p>',
             "</div>",
-            _header_title_block(name),
+            '<p class="app-eyebrow">Local · Inpaint</p>',
+            "</div>",
+            '<div class="app-header-body">',
+            # Keep class for tests / a11y title hook; visually replaced by brand-name.
+            f'<div class="app-header-title"><h1>{html.escape(name)}</h1></div>',
+            tagline_html,
             "</div>",
             "</div>",
         ]

@@ -19,6 +19,8 @@ from outfit_studio.ui.theme import (
     EDITOR_CANVAS_SIZE,
     PERSON_COLOR,
     UI,
+    build_gradio_theme,
+    studio_head_html,
 )
 
 
@@ -26,13 +28,14 @@ def build_ui(app) -> gr.Blocks:
     with gr.Blocks(
         css=CUSTOM_CSS,
         title=get_app_name(),
-        theme="Maani/MonoNeo",
+        theme=build_gradio_theme(),
+        head=studio_head_html(),
     ) as demo:
         gr.HTML(build_header_html(app.settings), elem_id="app-header")
 
         with gr.Tabs() as main_tabs:
             with gr.Tab("Generate"):
-                with gr.Row():
+                with gr.Row(elem_id="studio-session-bar"):
                     user_info = gr.Textbox(show_label=False, interactive=False)
                     credits_info = gr.Textbox(show_label=False, interactive=False)
                     if app.settings.require_auth:
@@ -72,9 +75,18 @@ def build_ui(app) -> gr.Blocks:
                         use_as_input = gr.Button("Use as Input", visible=False, size="sm")
                         with gr.Row():
                             stop_btn = gr.Button(
-                                "Stop", variant="stop", size="lg", interactive=False
+                                "Stop",
+                                variant="stop",
+                                size="lg",
+                                interactive=False,
+                                elem_id="stop-btn",
                             )
-                            generate_btn = gr.Button("Generate", variant="primary", size="lg")
+                            generate_btn = gr.Button(
+                                "Generate",
+                                variant="primary",
+                                size="lg",
+                                elem_id="generate-btn",
+                            )
                         action_buttons = [generate_btn, stop_btn, resegment_btn]
                         if app.examples:
                             examples = gr.Examples(

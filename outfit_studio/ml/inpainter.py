@@ -75,7 +75,6 @@ class InpaintEngine:
         self._warmup_active = False
         self._tt_unet_eager: object | None = None
         self._preload_state: PreloadState = "idle"
-        self._preload_error: str | None = None
         self._preload_lock = threading.Lock()
         self._preload_thread: threading.Thread | None = None
         self._preload_done = threading.Event()
@@ -131,7 +130,6 @@ class InpaintEngine:
                 self._preload_state = "ready"
                 return
             self._preload_state = "running"
-            self._preload_error = None
             self._preload_done.clear()
 
         def worker() -> None:
@@ -148,11 +146,10 @@ class InpaintEngine:
                 self.unload()
                 with self._preload_lock:
                     self._preload_state = "idle"
-            except Exception as exc:
+            except Exception:
                 logger.exception("Background inpaint preload failed")
                 with self._preload_lock:
                     self._preload_state = "failed"
-                    self._preload_error = str(exc)
             finally:
                 self.clear_work_abort()
                 self._preload_done.set()

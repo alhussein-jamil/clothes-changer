@@ -6,7 +6,6 @@ from typing import Final
 
 # --- Binary masks ---
 MASK_ON: Final[int] = 255
-MASK_OFF: Final[int] = 0
 
 # --- Human parser label IDs (fashn-ai/fashn-human-parser) ---
 # 0 background | 1 face | 2 hair | 3 top | 4 dress | 5 skirt | 6 pants | 7 belt

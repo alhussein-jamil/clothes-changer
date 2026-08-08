@@ -114,11 +114,6 @@ def streaming_compile_config(*, cache_dir: Path | None = None) -> Any:
     return CompileConfig(**kwargs)
 
 
-def memory_compile_config(*, cache_dir: Path | None = None) -> Any:
-    """Backward-compatible alias → :func:`latency_compile_config` (fast default)."""
-    return latency_compile_config(cache_dir=cache_dir)
-
-
 def module_param_bytes(module: nn.Module) -> int:
     """Total parameter storage bytes (ignores buffers)."""
     total = 0
@@ -195,11 +190,6 @@ class CompiledModuleAdapter(nn.Module):
 
     def cuda(self, *args: Any, **kwargs: Any) -> CompiledModuleAdapter:  # noqa: ANN401
         return self
-
-    def ensure_loaded(self) -> None:
-        fn = getattr(self.compiled, "ensure_loaded", None)
-        if callable(fn):
-            fn()
 
     def close(self) -> None:
         close_compiled(self.compiled)

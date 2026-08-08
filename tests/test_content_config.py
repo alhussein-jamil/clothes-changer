@@ -86,32 +86,19 @@ def test_ml_defaults_from_yaml(tmp_path, monkeypatch):
     monkeypatch.setattr("outfit_studio.content_config._LOCAL_FILE", missing)
     clear_content_config_cache()
 
-    from outfit_studio.content_config import (
-        get_controlnet_model,
-        get_detection_threshold,
-        get_guidance_scale,
-        get_human_parser_model,
-        get_inference_size,
-        get_inpaint_steps,
-        get_pose_keypoint_threshold,
-        get_pose_mode,
-        get_use_controlnet,
-    )
+    from outfit_studio.content_config import get_content_settings
 
+    content = get_content_settings()
     assert get_default_inpaint_model() == "custom.safetensors"
-    assert get_human_parser_model() == "org/human-parser"
-    assert get_controlnet_model() == "org/controlnet"
-    assert get_use_controlnet() is False
-    assert get_inpaint_steps() == 30
-    assert get_guidance_scale() == 7.0
-    assert get_inference_size() == 640
-    from outfit_studio.config import get_settings
-
-    get_settings.cache_clear()
-    assert get_settings().compile_inpaint_size == 640
-    assert get_detection_threshold() == 0.4
-    assert get_pose_keypoint_threshold() == 0.2
-    assert get_pose_mode() == "performance"
+    assert content.human_parser == "org/human-parser"
+    assert content.controlnet == "org/controlnet"
+    assert content.use_controlnet is False
+    assert content.steps == 30
+    assert content.guidance_scale == 7.0
+    assert content.inference_size == 640
+    assert content.detection_threshold == 0.4
+    assert content.keypoint_threshold == 0.2
+    assert content.pose_mode == "performance"
 
 
 def test_settings_reads_inpaint_from_yaml_not_env(tmp_path, monkeypatch):

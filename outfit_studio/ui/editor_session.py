@@ -64,23 +64,6 @@ class EditorSession:
             debug_session_dir if debug_session_dir is not None else self.debug_session_dir,
         )
 
-    def fields_after_segmentation(
-        self,
-        clean: Image.Image,
-        key: str,
-        debug_session_dir: str | None,
-    ) -> SessionFields:
-        """State after auto-segmentation writes masks into the editor."""
-        return clean, key, True, debug_session_dir
-
-    def with_clean_source(self, clean_source: Image.Image | None) -> EditorSession:
-        return EditorSession(
-            clean_source,
-            self.segment_key,
-            self.debug_session_dir,
-            self.suppress_upload_hook,
-        )
-
 
 def resolve_clean_on_upload(
     editor: dict | None,

@@ -138,20 +138,6 @@ class SegmentationHandlersMixin:
     def _clear_pending_editor(_pending: dict | None) -> None:
         return None
 
-    def segment(
-        self,
-        editor: dict | None,
-        clean_source: Image.Image | None = None,
-        segment_key: str | None = None,
-    ) -> tuple[dict, Image.Image | None]:
-        logger.info("segment: called")
-        clean = self._resolve_clean_image(editor, clean_source, segment_key)
-        if clean is None:
-            logger.warning("segment: skipped — no background image parsed")
-            return None, None
-        result = self._run_segmentation(editor, clean=clean)
-        return result.editor_value, result.pipeline_clean
-
     def prepare_upload_segment(
         self,
         editor: dict | None,

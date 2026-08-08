@@ -72,19 +72,3 @@ def refine_segmentation_masks(
         clothes_edge_grow_px=clothes_edge_grow_px,
     )
     return person, clothes
-
-
-def normalize_nested_masks(
-    person_mask: np.ndarray,
-    clothes_mask: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Refine parser-style masks where clothes lie inside the person silhouette.
-
-    Called from the segmentor only — do not run again in the generation pipeline
-    or clothes edges will be dilated twice.
-    """
-    person = (person_mask > 0).astype(np.uint8)
-    clothes = (clothes_mask > 0).astype(np.uint8)
-    if clothes.any() and (person & clothes).sum() == clothes.sum():
-        return refine_segmentation_masks(person, clothes)
-    return person, clothes
