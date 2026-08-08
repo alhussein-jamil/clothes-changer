@@ -40,10 +40,24 @@ def main() -> None:
     )
 
     logger.info(
-        "Bootstrapping runtime (log_level=%s, debug=%s)",
+        "Bootstrapping runtime (log_level=%s, debug=%s, tensor_torrent=%s)",
         logging.getLevelName(settings.resolved_log_level()),
         settings.debug,
+        settings.tensor_torrent,
     )
+    if settings.tensor_torrent:
+        from outfit_studio.ml.tt_runtime import tensor_torrent_available
+
+        if tensor_torrent_available():
+            logger.info(
+                "TensorTorrent enabled (cache=%s) — heavy modules stream/spill beyond VRAM",
+                settings.resolved_tensor_torrent_cache_dir,
+            )
+        else:
+            logger.warning(
+                "OUTFIT_STUDIO_TENSOR_TORRENT=true but tensortorrent import failed — "
+                "falling back to eager/torch.compile"
+            )
     if cuda:
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True

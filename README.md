@@ -104,12 +104,16 @@ downloads the configured segmentation and inpaint models.
 
 ## Make targets
 
+Run `make` (or `make help`) for the colored target list. `NO_COLOR=1` disables ANSI.
+
 | Target | Description |
 |--------|-------------|
+| `make` / `make help` | Show targets |
 | `make install` | Create `.venv` and install pinned Python dependencies |
 | `make install-fast` | Install deps from `uv.lock` and download models |
 | `make download-models` | Download segmentation weights and configured inpaint checkpoint |
 | `make run` | Start the Gradio UI |
+| `make stop` | Stop the local Gradio demo (`make run`) |
 | `make test` | Run non-slow unit tests |
 | `make lint` | Run Ruff |
 | `make docker-build` | Build the Docker image |
@@ -160,6 +164,11 @@ pipeline debug flags.
 | `OUTFIT_STUDIO_DEFAULT_*` | Default admin and credit settings |
 | `OUTFIT_STUDIO_DEBUG` / `OUTFIT_STUDIO_LOG_LEVEL` | Diagnostics |
 | `OUTFIT_STUDIO_PIPELINE_DEBUG*` | Intermediate artifact dumps |
+| `OUTFIT_STUDIO_TENSOR_TORRENT` | Enable TT size-gate path (default `true`) |
+| `OUTFIT_STUDIO_TENSOR_TORRENT_MIN_PARAMS_GB` | Skip TT below this param GiB (default `4.0`) |
+| `OUTFIT_STUDIO_TENSOR_TORRENT_UNET` | Allow UNet TT when size gate passes (default `true`) |
+| `OUTFIT_STUDIO_TENSOR_TORRENT_CACHE_DIR` | TT artifact cache (default `.cache/tensortorrent`) |
+| `OUTFIT_STUDIO_CIVITAI_API_TOKEN` | Bearer token for Civitai checkpoint downloads |
 
 Models, prompts, and generation defaults are intentionally not stored in `.env`.
 
@@ -189,7 +198,18 @@ custom `.safetensors` checkpoints and download URLs.
 | Segmentation | FASHN Human Parser (SegFormer B4) |
 | Pose, optional | rtmlib ONNX + ControlNet OpenPose |
 | Inpainting | Diffusers SD1.5 / SDXL inpaint |
+| Oversized models | TensorTorrent when params ≥ `MIN_PARAMS_GB` (else torch.compile) |
 | Auth/history | SQLite + Argon2 |
+
+When `OUTFIT_STUDIO_TENSOR_TORRENT=true` (default), Outfit Studio only hands a module
+to TensorTorrent if its parameters are at least
+`OUTFIT_STUDIO_TENSOR_TORRENT_MIN_PARAMS_GB` (default **4.0 GiB**). SD1.5 inpaint
+UNets (~1.7 GiB bf16) and the human parser stay on **eager / torch.compile** —
+TT's compile + schedule tax made them slower, and a resident LATENCY plan OOMs
+next to ControlNet on 8 GB cards. Oversized UNets (e.g. SDXL ≈4.8 GiB) use TT:
+`text_embeds` / `time_ids` export as plain tensors; LATENCY first, MEMORY+NVMe
+streaming if capacity fails. ControlNet stays eager. Pose ONNX stays outside TT.
+Artifacts cache under `.cache/tensortorrent/`.
 
 ## Development
 

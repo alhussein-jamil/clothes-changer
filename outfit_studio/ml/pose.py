@@ -16,6 +16,17 @@ from outfit_studio.ml.onnx_runtime import resolve_onnx_device
 logger = logging.getLogger(__name__)
 
 
+def _is_ort_oom(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    markers = (
+        "bfc_arena",
+        "failed to allocate",
+        "out of memory",
+        "cuda_error_out_of_memory",
+    )
+    return any(marker in text for marker in markers)
+
+
 class PoseEstimator:
     """Top-down whole-body pose with OpenPose skeleton for ControlNet."""
 
@@ -65,8 +76,18 @@ class PoseEstimator:
 
         free_cuda_cache()
 
+    def _fallback_to_cpu(self, exc: BaseException) -> None:
+        logger.warning("Pose CUDA OOM (%s) — reloading ONNX sessions on CPU", exc)
+        self.unload()
+        self.device = "cpu"
+        self._load()
+
     def get_bboxes(self, image: Image.Image) -> np.ndarray:
         """Person bounding boxes in xyxy format (matches original RTMDet flow)."""
+        from outfit_studio.ml.gpu_memory import prepare_for_pose
+
+        if self.device == "cuda":
+            prepare_for_pose()
         self._load()
         assert self._det is not None
         img = np.array(image.convert("RGB"))
@@ -80,7 +101,7 @@ class PoseEstimator:
         logger.debug("Detecting persons in %dx%d image", image.width, image.height)
         try:
             with torch.inference_mode():
-                bboxes = self._det(img)
+                bboxes = self._run_det(img)
         except ZeroDivisionError:
             logger.exception("Detection failed; using full image bbox")
             return np.array([[0, 0, image.width, image.height]], dtype=np.float32)
@@ -91,12 +112,27 @@ class PoseEstimator:
         logger.debug("Detected %d person(s)", len(bboxes))
         return np.asarray(bboxes, dtype=np.float32)
 
+    def _run_det(self, img: np.ndarray):
+        assert self._det is not None
+        try:
+            return self._det(img)
+        except Exception as exc:
+            if self.device != "cuda" or not _is_ort_oom(exc):
+                raise
+            self._fallback_to_cpu(exc)
+            assert self._det is not None
+            return self._det(img)
+
     def estimate_keypoints(
         self,
         image: Image.Image,
         bboxes: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Whole-body OpenPose keypoints and per-joint confidence scores."""
+        from outfit_studio.ml.gpu_memory import prepare_for_pose
+
+        if self.device == "cuda":
+            prepare_for_pose()
         self._load()
         assert self._pose is not None
         img = np.array(image.convert("RGB"))
@@ -106,9 +142,20 @@ class PoseEstimator:
         logger.debug("Estimating pose for %d bbox(es)", len(bboxes))
 
         with torch.inference_mode():
-            keypoints, scores = self._pose(img, bboxes=bboxes)
+            keypoints, scores = self._run_pose(img, bboxes)
 
         return np.asarray(keypoints), np.asarray(scores)
+
+    def _run_pose(self, img: np.ndarray, bboxes: np.ndarray):
+        assert self._pose is not None
+        try:
+            return self._pose(img, bboxes=bboxes)
+        except Exception as exc:
+            if self.device != "cuda" or not _is_ort_oom(exc):
+                raise
+            self._fallback_to_cpu(exc)
+            assert self._pose is not None
+            return self._pose(img, bboxes=bboxes)
 
     def render_skeleton(
         self,

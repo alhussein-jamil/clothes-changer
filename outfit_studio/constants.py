@@ -31,9 +31,21 @@ AIRBRUSH_STIPPLE_SPACING: Final[int] = 4
 AIRBRUSH_STIPPLE_FLOOR: Final[float] = 0.38
 AIRBRUSH_STIPPLE_CEIL: Final[float] = 1.0
 
+# --- Human parser / TensorTorrent ---
+# TT compiles static shapes; SegFormer always runs at this square size when TT is on.
+# Logits are bilinear-upsampled back to the source image resolution afterward.
+HUMAN_PARSER_TT_SIZE: Final[int] = 512
+
 # --- Stable Diffusion ---
 LATENT_ALIGN: Final[int] = 8
 MIN_LATENT_SIDE: Final[int] = 64
+# SDXL UNet sample_size=128 → native 1024px. 512 causes mush/blob artifacts.
+SDXL_MIN_INFER_SIZE: Final[int] = 1024
+# Lustify / SDXL NSFW cards: CFG 2.5–4.5. CFG≥7–10 overcooks → muddy torso blobs.
+SDXL_GUIDANCE_MAX: Final[float] = 4.5
+SDXL_MIN_STEPS: Final[int] = 28
+# Full denoise (1.0) + soft mask on SDXL often yields incoherent fill; stay below.
+SDXL_INPAINT_STRENGTH: Final[float] = 0.85
 CLIP_MAX_TOKENS: Final[int] = 77
 INPAINT_STRENGTH: Final[float] = 1.0
 
@@ -53,7 +65,10 @@ VRAM_SEGMENTATION_PEAK_GB: Final[float] = 3.5
 VRAM_INPAINT_SDXL_GB: Final[float] = 10.0
 VRAM_INPAINT_CONTROLNET_GB: Final[float] = 6.0
 VRAM_INPAINT_PLAIN_GB: Final[float] = 4.5
-VRAM_POSE_PEAK_GB: Final[float] = 0.5
+# YOLOX + RTMPose ORT CUDA sessions need headroom beyond a single 19 MiB Conv buffer.
+VRAM_POSE_PEAK_GB: Final[float] = 1.5
+# Below this total VRAM: pose on CPU, inpaint attention/VAE slicing, no torch.compile.
+VRAM_TIGHT_TOTAL_GB: Final[float] = 11.0
 BYTES_PER_GB: Final[int] = 1024**3
 BYTES_PER_KIB: Final[int] = 1024
 

@@ -26,7 +26,8 @@ segmentation:
 generation:
   use_controlnet: true
   steps: 24
-  guidance_scale: 10.0
+  # SD1.5-friendly default. SDXL (Lustify) is clamped to ≤4.5 at runtime.
+  guidance_scale: 7.0
   inference_size: 512
 
 pose:

@@ -18,6 +18,7 @@ from outfit_studio.constants import (
     VRAM_INPAINT_SDXL_GB,
     VRAM_POSE_PEAK_GB,
     VRAM_SEGMENTATION_PEAK_GB,
+    VRAM_TIGHT_TOTAL_GB,
 )
 from outfit_studio.ml.checkpoints import is_sdxl_model_name
 
@@ -78,6 +79,13 @@ def gpu_free_gb() -> float:
     return gpu_memory_gb()[0]
 
 
+def vram_is_tight() -> bool:
+    """True on consumer cards that cannot hold pose + seg + ControlNet inpaint."""
+    if not torch.cuda.is_available():
+        return False
+    return gpu_total_gb() < VRAM_TIGHT_TOTAL_GB
+
+
 def _inpaint_vram_budget_gb() -> float:
     """Estimate peak VRAM inpainting needs so segmentation can yield the GPU."""
     from outfit_studio.config import get_settings
@@ -119,22 +127,83 @@ def prepare_for_segmentation() -> None:
     release_inpaint_gpu()
 
 
-def prepare_for_inpaint() -> None:
-    """Free segmentation VRAM only when inpaint must load and space is tight."""
-    if not segmentation_uses_cuda():
+def prepare_for_pose() -> None:
+    """Free PyTorch GPU residents so ONNX Runtime CUDA arenas can allocate.
+
+    Pose runs *before* inpaint load in the generation pipeline, but background
+    preload / a prior generate may still hold the UNet. ORT uses its own BFC
+    arena and fails hard when PyTorch has the card filled.
+    """
+    if not torch.cuda.is_available():
         return
+
+    free_cuda_cache()
+    if gpu_free_gb() >= VRAM_POSE_PEAK_GB:
+        return
+
     from outfit_studio.ml.inpainter import get_inpaint_engine
+
+    if get_inpaint_engine().is_loaded():
+        logger.info(
+            "Freeing inpaint GPU for pose (free=%.2f GB < need=%.2f GB)",
+            gpu_free_gb(),
+            VRAM_POSE_PEAK_GB,
+        )
+        release_inpaint_gpu()
+        free_cuda_cache()
+
+    if gpu_free_gb() >= VRAM_POSE_PEAK_GB:
+        return
+
     from outfit_studio.ml.segmentor import get_segmentor
 
-    engine = get_inpaint_engine()
-    if engine.is_loaded():
-        return
+    if get_segmentor().is_loaded() and segmentation_uses_cuda():
+        logger.info(
+            "Freeing segmentation GPU for pose (free=%.2f GB < need=%.2f GB)",
+            gpu_free_gb(),
+            VRAM_POSE_PEAK_GB,
+        )
+        release_segmentation_gpu()
+        free_cuda_cache()
+
+
+def release_pose_gpu() -> None:
+    """Drop rtmlib ONNX CUDA sessions (safe once bboxes/keypoints are done)."""
+    from outfit_studio.ml.pose import get_pose_estimator
+
+    est = get_pose_estimator()
+    if est.device == "cuda" and (est._det is not None or est._pose is not None):
+        logger.info("Releasing pose/detector ONNX from GPU")
+    est.unload()
+    free_cuda_cache()
+
+
+def prepare_for_inpaint() -> None:
+    """Yield GPU to the inpaint pipeline (pose + segmentation must not linger).
+
+    On 8 GB cards, SD1.5 inpaint + ControlNet needs most of the device. Pose
+    ONNX and the human parser have already produced their outputs by the time
+    this runs (or can reload on CPU), so they must leave VRAM first.
+    """
+    release_pose_gpu()
+
+    from outfit_studio.ml.segmentor import get_segmentor
+
     segmentor = get_segmentor()
-    if not segmentor.is_loaded():
-        return
-    if both_stacks_fit_on_gpu() and gpu_free_gb() >= _inpaint_vram_budget_gb():
-        return
-    release_segmentation_gpu()
+    if segmentor.is_loaded() and (
+        segmentation_uses_cuda() or gpu_free_gb() < _inpaint_vram_budget_gb()
+    ):
+        # Free CUDA-resident parser; also drop when VRAM is below the inpaint budget.
+        release_segmentation_gpu()
+
+    free_cuda_cache()
+    free_gb, total_gb = gpu_memory_gb()
+    logger.info(
+        "GPU ready for inpaint (free=%.2f/%.2f GB, budget≈%.1f GB)",
+        free_gb,
+        total_gb,
+        _inpaint_vram_budget_gb(),
+    )
 
 
 def prefer_cpu_for_segmentation() -> bool:
