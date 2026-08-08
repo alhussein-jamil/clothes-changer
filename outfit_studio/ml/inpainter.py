@@ -946,6 +946,7 @@ class InpaintEngine:
                     logger.debug("park %s for TT capture skipped: %s", name, exc)
             free_cuda_cache()
 
+        compiled = None
         try:
             compiled = try_compile_unet(
                 unet,
@@ -958,8 +959,11 @@ class InpaintEngine:
                 min_params_gb=self.settings.tensor_torrent_min_params_gb,
             )
         finally:
-            # Tight VRAM: leave peers on CPU (finalize parks again). Else restore to GPU.
-            restore_device = torch.device("cpu") if vram_is_tight() else self.device
+            # TT hit on tight VRAM: leave peers on CPU (finalize installs TE wrap).
+            # TT miss/skip: MUST restore GPU — else encode_prompt gets cuda ids vs cpu TE.
+            restore_device = (
+                torch.device("cpu") if compiled is not None and vram_is_tight() else self.device
+            )
             for name, mod in parked:
                 try:
                     setattr(pipe, name, mod.to(restore_device))

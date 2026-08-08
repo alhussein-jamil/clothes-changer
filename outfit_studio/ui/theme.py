@@ -382,14 +382,25 @@ button.stop, .gr-button-stop {{
 }}
 
 /* Image editor / slider stage */
-.image-container, .image-frame, .upload-container,
-[data-testid="image"], .svelte-1pijsy0 {{
+#studio-generate-row .image-container,
+.image-container, .image-frame, .upload-container {{
   border-radius: var(--os-radius-sm) !important;
   border: 1px solid var(--os-line) !important;
   background: linear-gradient(180deg, #20231f, #0b0d0b) !important;
 }}
+/* ImageEditor needs real height — transform animations + flex equal-height
+   collapse the canvas to a bottom sliver (~few px). */
+#studio-generate-row .image-container,
 .image-container {{
-  animation: os-rise 480ms ease-out;
+  min-height: 420px !important;
+  height: auto !important;
+  overflow: visible !important;
+}}
+#studio-generate-row .image-container canvas,
+#studio-generate-row .image-container img,
+.image-container canvas,
+.image-container img {{
+  max-height: none !important;
 }}
 /* Soften Gradio ImageEditor dashed empty chrome */
 .image-container .empty, .upload-container .wrap {{
