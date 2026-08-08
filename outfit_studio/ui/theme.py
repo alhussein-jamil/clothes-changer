@@ -19,6 +19,9 @@ class MaskEditor:
 
 class UI:
     EDITOR_CANVAS_SIZE: Final[tuple[int, int]] = (1000, 1000)
+    # Explicit Gradio ImageEditor height — without it, Pixi stage collapses under
+    # custom themes (blank preview / bottom-pixel sliver). Include toolbar room.
+    EDITOR_HEIGHT_PX: Final[int] = 720
     PERSON_COLOR: Final[tuple[int, int, int, int]] = (255, 0, 0, 90)
     CLOTHES_COLOR: Final[tuple[int, int, int, int]] = (0, 255, 0, 110)
     BRUSH_DEFAULT_SIZE: Final[int] = 28
@@ -381,34 +384,38 @@ button.stop, .gr-button-stop {{
   text-transform: none !important;
 }}
 
-/* Image editor / slider stage */
-#studio-generate-row .image-container,
-.image-container, .image-frame, .upload-container {{
+/* Image editor — never paint opaque fills on .upload-container / .image-container.
+   Gradio's upload-container is a full-size absolute overlay; a solid background
+   hides the Pixi canvas (blank preview + bottom-pixel sliver under the toolbar). */
+#studio-input-editor {{
+  --block-radius: var(--os-radius-sm);
+  overflow: visible !important;
+}}
+#studio-input-editor .image-container {{
+  background: transparent !important;
+}}
+#studio-input-editor .image-container .empty {{
+  border-style: dashed !important;
+  border-color: var(--os-line-strong) !important;
+  color: var(--os-muted) !important;
+  background: transparent !important;
+}}
+#studio-input-editor .upload-container {{
+  background: transparent !important;
+}}
+#studio-input-editor .toolbar-wrap,
+#studio-input-editor .toolbar {{
+  background: rgba(17, 19, 17, 0.92) !important;
+  border: 1px solid var(--os-line) !important;
+  border-radius: var(--os-radius-sm) !important;
+  backdrop-filter: blur(8px);
+}}
+.image-frame {{
   border-radius: var(--os-radius-sm) !important;
   border: 1px solid var(--os-line) !important;
   background: linear-gradient(180deg, #20231f, #0b0d0b) !important;
 }}
-/* ImageEditor needs real height — transform animations + flex equal-height
-   collapse the canvas to a bottom sliver (~few px). */
-#studio-generate-row .image-container,
-.image-container {{
-  min-height: 420px !important;
-  height: auto !important;
-  overflow: visible !important;
-}}
-#studio-generate-row .image-container canvas,
-#studio-generate-row .image-container img,
-.image-container canvas,
-.image-container img {{
-  max-height: none !important;
-}}
-/* Soften Gradio ImageEditor dashed empty chrome */
-.image-container .empty, .upload-container .wrap {{
-  border-style: dashed !important;
-  border-color: var(--os-line-strong) !important;
-  color: var(--os-muted) !important;
-}}
-.toolbar-wrap, .image-container .toolbar {{
+.toolbar-wrap {{
   background: rgba(17, 19, 17, 0.92) !important;
   border: 1px solid var(--os-line) !important;
   border-radius: var(--os-radius-sm) !important;
