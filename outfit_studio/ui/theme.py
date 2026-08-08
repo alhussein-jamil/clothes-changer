@@ -384,15 +384,51 @@ button.stop, .gr-button-stop {{
   text-transform: none !important;
 }}
 
-/* Image editor — never paint opaque fills on .upload-container / .image-container.
-   Gradio's upload-container is a full-size absolute overlay; a solid background
-   hides the Pixi canvas (blank preview + bottom-pixel sliver under the toolbar). */
+/* Image editor — transparent overlays (opaque fills hide Pixi) + contain stage
+   inside the block. Portrait Pixi canvases ignore max-height:% (circular sizing);
+   pin max-height to editor chrome with absolute px. */
 #studio-input-editor {{
   --block-radius: var(--os-radius-sm);
-  overflow: visible !important;
+  --os-editor-stage-max: {UI.EDITOR_HEIGHT_PX - 96}px;
+  overflow: hidden !important;
 }}
 #studio-input-editor .image-container {{
   background: transparent !important;
+  overflow: hidden !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+}}
+#studio-input-editor .wrap {{
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+  align-items: center !important;
+  justify-content: center !important;
+}}
+#studio-input-editor .stage-wrap {{
+  max-width: 100% !important;
+  max-height: var(--os-editor-stage-max) !important;
+  width: auto !important;
+  height: auto !important;
+  margin: var(--size-2) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}}
+#studio-input-editor .stage-wrap canvas {{
+  display: block !important;
+  max-width: 100% !important;
+  max-height: var(--os-editor-stage-max) !important;
+  width: auto !important;
+  height: auto !important;
+  object-fit: contain !important;
+}}
+#studio-input-editor .tools-wrap {{
+  flex: 0 0 auto !important;
+  margin: var(--spacing-md) 0 !important;
 }}
 #studio-input-editor .image-container .empty {{
   border-style: dashed !important;

@@ -22,6 +22,14 @@ def test_custom_css_keeps_upload_overlay_transparent():
     assert "animation: os-rise" not in CUSTOM_CSS
 
 
+def test_custom_css_contains_editor_stage():
+    # overflow:visible spilled portrait canvases over Model & prompts.
+    assert "overflow: visible !important" not in CUSTOM_CSS
+    assert "--os-editor-stage-max" in CUSTOM_CSS
+    assert "object-fit: contain !important" in CUSTOM_CSS
+    assert f"{UI.EDITOR_HEIGHT_PX - 96}px" in CUSTOM_CSS
+
+
 def test_generate_row_does_not_use_equal_height():
     src = inspect.getsource(layout.build_ui)
     assert 'elem_id="studio-generate-row"' in src
