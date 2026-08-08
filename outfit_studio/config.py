@@ -18,7 +18,6 @@ from outfit_studio.constants import DEFAULT_ADMIN_BOOTSTRAP_CREDITS
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PROJECT_ROOT = _PROJECT_ROOT
 _DEFAULT_SESSION_SECRET = "change-me-in-production"
 _LOCAL_HOST_MARKERS = ("localhost", "127.0.0.1", "[::1]")
 
@@ -91,14 +90,6 @@ class Settings(BaseSettings):
     def content(self) -> content_config.ContentSettings:
         """Branded copy and ML defaults from config/content*.yaml."""
         return content_config.get_content_settings()
-
-    @property
-    def compile_inpaint_size(self) -> int:
-        """Fixed square size for every inpaint pass (keeps torch.compile graphs stable)."""
-        from outfit_studio.constants import LATENT_ALIGN, MIN_LATENT_SIDE
-
-        aligned = self.content.inference_size // LATENT_ALIGN * LATENT_ALIGN
-        return max(aligned, MIN_LATENT_SIDE)
 
     @field_validator("log_level", mode="before")
     @classmethod

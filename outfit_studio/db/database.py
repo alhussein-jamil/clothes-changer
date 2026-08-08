@@ -229,10 +229,6 @@ class Database:
             row = conn.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone()
         return row is not None
 
-    def get_credits(self, username: str) -> int:
-        user = self.get_user(username)
-        return user.credits if user else 0
-
     def deduct_credit(self, username: str) -> bool:
         with self._transaction() as conn:
             row = conn.execute(

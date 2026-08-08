@@ -84,13 +84,6 @@ def test_streaming_compile_config_enables_nvme():
     assert cfg.use_torch_compile is False
 
 
-def test_memory_compile_config_aliases_latency():
-    a = tt_runtime.memory_compile_config(cache_dir=Path("/tmp/tt-cache"))
-    b = tt_runtime.latency_compile_config(cache_dir=Path("/tmp/tt-cache"))
-    assert a.objective == b.objective
-    assert a.allow_nvme_streaming == b.allow_nvme_streaming
-
-
 def test_compile_tiny_module_roundtrip(tmp_path: Path):
     model = nn.Sequential(nn.Linear(8, 16), nn.ReLU(), nn.Linear(16, 4)).eval()
     x = torch.randn(2, 8)

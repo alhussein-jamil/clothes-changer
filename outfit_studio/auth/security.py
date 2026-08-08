@@ -13,6 +13,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 
+from outfit_studio.auth.session import DEVICE_COOKIE
+
 if TYPE_CHECKING:
     from outfit_studio.config import Settings
 
@@ -36,7 +38,7 @@ def client_ip(request: Request, *, trusted_hops: int = 1) -> str | None:
 
 
 def device_fingerprint(request: Request) -> str | None:
-    raw = request.cookies.get("device_fp", "").strip()
+    raw = request.cookies.get(DEVICE_COOKIE, "").strip()
     if not raw or len(raw) > 128:
         return None
     return raw

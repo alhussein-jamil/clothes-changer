@@ -53,6 +53,7 @@ dev = [
 outfit-studio = "outfit_studio.main:main"
 outfit-studio-download-models = "outfit_studio.scripts.download_models:main"
 outfit-studio-add-user = "outfit_studio.scripts.add_user:main"
+outfit-studio-benchmark-steps = "outfit_studio.scripts.benchmark_steps:main"
 
 [build-system]
 requires = ["hatchling"]

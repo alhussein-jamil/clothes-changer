@@ -226,34 +226,6 @@ def letterbox_to_editor_canvas(
     return canvas
 
 
-def letterbox_masks(
-    person: np.ndarray,
-    clothes: np.ndarray,
-    src_size: tuple[int, int],
-    canvas_size: tuple[int, int] = EDITOR_CANVAS_SIZE,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Apply the same letterbox transform as ``letterbox_to_editor_canvas`` to masks."""
-    sw, sh = src_size
-    cw, ch = canvas_size
-    if (sw, sh) == (cw, ch):
-        return person, clothes
-
-    scale = min(cw / sw, ch / sh)
-    new_w = max(1, int(sw * scale))
-    new_h = max(1, int(sh * scale))
-    ox = (cw - new_w) // 2
-    oy = (ch - new_h) // 2
-
-    person_r = cv2.resize(person, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-    clothes_r = cv2.resize(clothes, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-
-    person_out = np.zeros((ch, cw), dtype=np.uint8)
-    clothes_out = np.zeros((ch, cw), dtype=np.uint8)
-    person_out[oy : oy + new_h, ox : ox + new_w] = person_r
-    clothes_out[oy : oy + new_h, ox : ox + new_w] = clothes_r
-    return person_out, clothes_out
-
-
 def unletterbox_masks(
     person: np.ndarray,
     clothes: np.ndarray,

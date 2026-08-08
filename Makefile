@@ -62,7 +62,7 @@ endef
 .DEFAULT_GOAL := help
 
 .PHONY: help install install-fast download-models fix-ort-gpu \
-	run stop test lint clean add-user \
+	run stop test lint clean add-user benchmark-steps \
 	docker-build docker-up docker-up-cpu docker-down docker-logs docker-download-models
 
 # ── help ──────────────────────────────────────────────────────────────
@@ -80,6 +80,7 @@ help:
 	@printf '$(C_ORANGE)$(C_BOLD)  Quality$(C_RESET)\n'
 	@printf '    $(C_CYAN)test$(C_RESET)                    pytest (skip slow)\n'
 	@printf '    $(C_CYAN)lint$(C_RESET)                    ruff check\n'
+	@printf '    $(C_CYAN)benchmark-steps$(C_RESET)         inpaint step-count quality sweep\n'
 	@printf '    $(C_CYAN)clean$(C_RESET)                   wipe .venv + caches\n\n'
 	@printf '$(C_DIM)  TensorTorrent streams oversized UNets beyond VRAM$(C_RESET)\n'
 	@printf '$(C_DIM)  (OUTFIT_STUDIO_TENSOR_TORRENT=true; cache .cache/tensortorrent)$(C_RESET)\n\n'
@@ -163,6 +164,10 @@ lint:
 	$(call say,lint)
 	$(UV) run ruff check outfit_studio tests
 	$(call ok,ruff clean)
+
+benchmark-steps:
+	$(call say,benchmark inpaint steps)
+	$(UV) run outfit-studio-benchmark-steps
 
 clean:
 	$(call say,clean venv + caches)

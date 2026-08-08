@@ -17,8 +17,11 @@ def test_build_header_html_uses_logo_image():
     assert "outfit-studio-logo" in html_out
     assert "<svg" not in html_out
     assert "app-header-title" in html_out
-    assert "Outfit Studio" in html_out
+    assert "app-brand-name" in html_out
+    assert "Outfit" in html_out
+    assert "Studio" in html_out
     assert "app-header-tagline" in html_out
+    assert "app-eyebrow" in html_out
 
 
 def _editor_value(update: dict) -> dict:
@@ -53,7 +56,7 @@ def test_segment_after_example(mock_run_segmentation, db):
 
 
 @patch("outfit_studio.ui.handlers.segmentation.run_segmentation")
-def test_segment(mock_run_segmentation, db):
+def test_run_segmentation_returns_editor_and_clean(mock_run_segmentation, db):
     app = GradioApp(db=db)
     bg = Image.new("RGB", (32, 32))
     person = np.zeros((32, 32), dtype=np.uint8)
@@ -62,10 +65,10 @@ def test_segment(mock_run_segmentation, db):
     mock_run_segmentation.return_value = (person, clothes, None)
 
     editor = apply_masks_to_editor(bg, person, clothes)
-    editor_value, clean = app.segment(editor)
-    assert editor_value is not None
-    assert "layers" in editor_value
-    assert clean is not None
+    result = app._run_segmentation(editor, clean=bg)
+    assert result.editor_value is not None
+    assert "layers" in result.editor_value
+    assert result.pipeline_clean is not None
 
 
 @patch("outfit_studio.ui.handlers.segmentation.run_segmentation")

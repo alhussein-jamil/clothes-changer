@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.responses import Response
 
 from outfit_studio.auth.security import RateLimiter, client_ip, device_fingerprint
-from outfit_studio.auth.session import SessionManager
+from outfit_studio.auth.session import DEVICE_COOKIE, SessionManager
 from outfit_studio.constants import DEFAULT_NEW_USER_CREDITS, MIN_PASSWORD_LENGTH
 from outfit_studio.db.database import Database, DatabaseError
 
@@ -27,24 +27,33 @@ _LOGIN_PAGE_STYLE = (_TEMPLATES_DIR / "login.css").read_text(encoding="utf-8")
 
 
 def _fingerprint_script() -> str:
-    return """
+    return f"""
 <script>
-(function () {
-  function hash(s) {
+(function () {{
+  function hash(s) {{
     var h = 0;
     for (var i = 0; i < s.length; i++) h = ((h << 5) - h) + s.charCodeAt(i) | 0;
     return Math.abs(h).toString(16);
-  }
+  }}
   var parts = [
     navigator.userAgent || '',
     navigator.language || '',
     screen.width + 'x' + screen.height,
     screen.colorDepth || ''
   ].join('|');
-  document.cookie = 'device_fp=' + hash(parts) + '; path=/; SameSite=Lax; max-age=31536000';
-})();
+  document.cookie = '{DEVICE_COOKIE}=' + hash(parts) + '; path=/; SameSite=Lax; max-age=31536000';
+}})();
 </script>
 """
+
+
+def _brand_title_html(title: str) -> str:
+    parts = title.strip().split()
+    if len(parts) >= 2:
+        head = html.escape(" ".join(parts[:-1]))
+        tail = html.escape(parts[-1])
+        return f"{head} <b>{tail}</b>"
+    return html.escape(title)
 
 
 def _render_page(
@@ -84,13 +93,17 @@ def _render_page(
 <html lang="en"><head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="color-scheme" content="light dark" />
+<meta name="color-scheme" content="dark" />
 <title>{html.escape(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>{_LOGIN_PAGE_STYLE}</style>
 {_fingerprint_script()}
 </head><body>
 <div class="card">
-<h1>{html.escape(title)}</h1>
+<p class="eyebrow">Local · Inpaint</p>
+<h1>{_brand_title_html(title)}</h1>
 <p class="sub">Sign in to generate outfits. One account per device and network.</p>
 <div class="tabs">
   <a class="{signin_active}" href="/login?mode=signin">Sign in</a>

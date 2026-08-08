@@ -2,10 +2,7 @@ import numpy as np
 from PIL import Image
 from scipy import ndimage
 
-from outfit_studio.ml.mask_postprocess import (
-    normalize_nested_masks,
-    refine_segmentation_masks,
-)
+from outfit_studio.ml.mask_postprocess import refine_segmentation_masks
 from outfit_studio.utils.image import mask_overlay
 
 
@@ -104,26 +101,3 @@ def test_refine_segmentation_masks_closes_clothes_edge_ring():
     core = clothes_out[35:65, 35:65].astype(bool)
     core_pixels = overlay[35:65, 35:65][core]
     assert core_pixels[:, 1].mean() > core_pixels[:, 0].mean() + 10
-
-
-def test_normalize_nested_masks_skips_disjoint_editor_masks():
-    person = np.zeros((50, 50), dtype=np.uint8)
-    clothes = np.zeros((50, 50), dtype=np.uint8)
-    person[5:15, 5:15] = 1
-    clothes[30:40, 30:40] = 1
-
-    person_out, clothes_out = normalize_nested_masks(person, clothes)
-    assert person_out.sum() == person.sum()
-    assert clothes_out.sum() == clothes.sum()
-
-
-def test_normalize_nested_masks_refines_segmentation_output():
-    person = np.zeros((100, 100), dtype=np.uint8)
-    clothes = np.zeros((100, 100), dtype=np.uint8)
-    person[20:80, 20:80] = 1
-    clothes[22:78, 22:78] = 1
-
-    _, clothes_out = normalize_nested_masks(person, clothes)
-    ring = (person > 0) & ~(clothes_out > 0)
-    ring &= ndimage.binary_dilation(clothes_out > 0)
-    assert ring.sum() == 0

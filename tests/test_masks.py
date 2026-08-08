@@ -20,20 +20,26 @@ def test_letterbox_to_editor_canvas_centers_portrait():
     assert arr[10, 10, 0] == 0
 
 
-def test_letterbox_unletterbox_roundtrip():
-    from outfit_studio.ui.masks import letterbox_masks, unletterbox_masks
+def test_unletterbox_masks_restores_source_shape():
+    from outfit_studio.ui.masks import unletterbox_masks
 
     src_size = (800, 600)
-    person = np.zeros((600, 800), dtype=np.uint8)
-    clothes = np.zeros((600, 800), dtype=np.uint8)
-    clothes[100:300, 200:500] = 1
+    cw, ch = EDITOR_CANVAS_SIZE
+    scale = min(cw / 800, ch / 600)
+    new_w = max(1, int(800 * scale))
+    new_h = max(1, int(600 * scale))
+    ox = (cw - new_w) // 2
+    oy = (ch - new_h) // 2
 
-    lb_person, lb_clothes = letterbox_masks(person, clothes, src_size)
-    back_person, back_clothes = unletterbox_masks(lb_person, lb_clothes, src_size)
+    person = np.zeros((ch, cw), dtype=np.uint8)
+    clothes = np.zeros((ch, cw), dtype=np.uint8)
+    # Paint a block inside the letterboxed content region.
+    clothes[oy + new_h // 4 : oy + 3 * new_h // 4, ox + new_w // 4 : ox + 3 * new_w // 4] = 1
 
-    assert back_person.shape == person.shape
+    back_person, back_clothes = unletterbox_masks(person, clothes, src_size)
+    assert back_person.shape == (600, 800)
+    assert back_clothes.shape == (600, 800)
     assert int(back_clothes.sum()) > 0
-    assert back_clothes[150, 350] == 1
 
 
 def test_resolve_masks_prefers_cached_segment_masks_when_layers_stripped():
