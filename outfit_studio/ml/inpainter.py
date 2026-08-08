@@ -1071,6 +1071,53 @@ class InpaintEngine:
         free_cuda_cache()
         logger.info("Inpaint pipeline warm")
 
+    def encode_prompt_embeds(
+        self,
+        prompt: str,
+        negative_prompt: str,
+    ) -> dict[str, torch.Tensor] | None:
+        """Encode prompts once per Generate; reuse across multi-person inpaints."""
+        if self._pipe is None:
+            return None
+        prompt, negative_prompt = self._truncate_prompts(prompt, negative_prompt)
+        do_cfg = True
+        try:
+            if self._architecture == "sdxl":
+                (
+                    prompt_embeds,
+                    negative_prompt_embeds,
+                    pooled_prompt_embeds,
+                    negative_pooled_prompt_embeds,
+                ) = self._pipe.encode_prompt(
+                    prompt=prompt,
+                    prompt_2=None,
+                    device=self.device,
+                    num_images_per_prompt=1,
+                    do_classifier_free_guidance=do_cfg,
+                    negative_prompt=negative_prompt,
+                    negative_prompt_2=None,
+                )
+                return {
+                    "prompt_embeds": prompt_embeds,
+                    "negative_prompt_embeds": negative_prompt_embeds,
+                    "pooled_prompt_embeds": pooled_prompt_embeds,
+                    "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
+                }
+            prompt_embeds, negative_prompt_embeds = self._pipe.encode_prompt(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                device=self.device,
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=do_cfg,
+            )
+            return {
+                "prompt_embeds": prompt_embeds,
+                "negative_prompt_embeds": negative_prompt_embeds,
+            }
+        except Exception as exc:
+            logger.warning("Prompt embed cache skipped (%s) — per-call encode", exc)
+            return None
+
     def inpaint(
         self,
         image: Image.Image,
@@ -1083,6 +1130,7 @@ class InpaintEngine:
         control_image: Image.Image | None = None,
         strength: float = 1.0,
         on_step: StepProgressCallback | None = None,
+        prompt_embeds: dict[str, torch.Tensor] | None = None,
     ) -> Image.Image:
         if self._pipe is None:
             self.load()
@@ -1138,8 +1186,6 @@ class InpaintEngine:
         )
 
         kwargs: dict = {
-            "prompt": prompt,
-            "negative_prompt": negative_prompt,
             "image": image,
             "mask_image": mask,
             "num_inference_steps": steps,
@@ -1149,6 +1195,11 @@ class InpaintEngine:
             "height": infer_size,
             "strength": strength,
         }
+        if prompt_embeds:
+            kwargs.update(prompt_embeds)
+        else:
+            kwargs["prompt"] = prompt
+            kwargs["negative_prompt"] = negative_prompt
 
         if self._use_controlnet:
             if control_image is None:

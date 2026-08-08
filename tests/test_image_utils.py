@@ -256,14 +256,14 @@ def test_generation_skips_instances_without_clothes(monkeypatch):
 
     class DummyPose:
         @staticmethod
-        def get_bboxes(image):
+        def get_bboxes(image, *, prepare=True):
             return np.array(
                 [[0, 0, 100, 200], [100, 0, 200, 200]],
                 dtype=np.float32,
             )
 
         @staticmethod
-        def estimate_keypoints(image):
+        def estimate_keypoints(image, bboxes=None, *, prepare=True):
             return np.zeros((1, 134, 2), dtype=np.float32), np.zeros((1, 134), dtype=np.float32)
 
         @staticmethod
@@ -280,12 +280,20 @@ def test_generation_skips_instances_without_clothes(monkeypatch):
         }
 
     monkeypatch.setattr("outfit_studio.ml.pipeline.prepare_for_inpaint", lambda: None)
+    monkeypatch.setattr("outfit_studio.ml.pipeline.prepare_next_generate", lambda **k: None)
     monkeypatch.setattr("outfit_studio.ml.pipeline.free_cuda_cache", lambda: None)
     monkeypatch.setattr("outfit_studio.ml.pipeline.get_pose_estimator", lambda: DummyPose())
     monkeypatch.setattr(GenerationPipeline, "_process_single_mask", fake_process)
     monkeypatch.setattr(
         "outfit_studio.ml.pipeline.get_inpaint_engine",
-        lambda: type("Engine", (), {"load": lambda *a, **k: None})(),
+        lambda: type(
+            "Engine",
+            (),
+            {
+                "load": lambda *a, **k: None,
+                "encode_prompt_embeds": lambda *a, **k: None,
+            },
+        )(),
     )
 
     result, _, _ = GenerationPipeline().generate(
@@ -295,6 +303,7 @@ def test_generation_skips_instances_without_clothes(monkeypatch):
         prompt="prompt",
         negative_prompt="negative",
         username="test",
+        use_controlnet=False,
     )
 
     assert len(calls) == 1
@@ -315,11 +324,11 @@ def test_generation_preserves_source_size(monkeypatch):
 
     class DummyPose:
         @staticmethod
-        def get_bboxes(image):
+        def get_bboxes(image, *, prepare=True):
             return np.array([[0, 0, image.width, image.height]], dtype=np.float32)
 
         @staticmethod
-        def estimate_keypoints(image):
+        def estimate_keypoints(image, bboxes=None, *, prepare=True):
             return np.zeros((1, 134, 2), dtype=np.float32), np.zeros((1, 134), dtype=np.float32)
 
         @staticmethod
@@ -335,6 +344,7 @@ def test_generation_preserves_source_size(monkeypatch):
         }
 
     monkeypatch.setattr("outfit_studio.ml.pipeline.prepare_for_inpaint", lambda: None)
+    monkeypatch.setattr("outfit_studio.ml.pipeline.prepare_next_generate", lambda **k: None)
     monkeypatch.setattr("outfit_studio.ml.pipeline.free_cuda_cache", lambda: None)
     monkeypatch.setattr("outfit_studio.ml.pipeline.get_pose_estimator", lambda: DummyPose())
     monkeypatch.setattr(
@@ -344,7 +354,14 @@ def test_generation_preserves_source_size(monkeypatch):
     monkeypatch.setattr(GenerationPipeline, "_process_single_mask", fake_process)
     monkeypatch.setattr(
         "outfit_studio.ml.pipeline.get_inpaint_engine",
-        lambda: type("Engine", (), {"load": lambda *a, **k: None})(),
+        lambda: type(
+            "Engine",
+            (),
+            {
+                "load": lambda *a, **k: None,
+                "encode_prompt_embeds": lambda *a, **k: None,
+            },
+        )(),
     )
 
     result, _, _ = GenerationPipeline().generate(
@@ -354,6 +371,7 @@ def test_generation_preserves_source_size(monkeypatch):
         prompt="prompt",
         negative_prompt="negative",
         username="test",
+        use_controlnet=False,
     )
 
     assert result.size == source.size
